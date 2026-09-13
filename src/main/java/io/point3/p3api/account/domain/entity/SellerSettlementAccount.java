@@ -47,14 +47,17 @@ public class SellerSettlementAccount {
   @Column(name = "encrypted_account_holder_name", nullable = false, columnDefinition = "text")
   private String encryptedAccountHolderName;
 
+  @Column(name = "encrypted_business_registration_number", columnDefinition = "text")
+  private String encryptedBusinessRegistrationNumber;
+
   @Enumerated(EnumType.STRING)
   @Column(name = "account_holder_type", nullable = false, length = 20)
   private AccountHolderType accountHolderType;
 
-  @Column(name = "provider_transaction_id", nullable = false, length = 40)
+  @Column(name = "provider_transaction_id", length = 40)
   private String providerTransactionId;
 
-  @Column(name = "verified_at", nullable = false)
+  @Column(name = "verified_at")
   private Instant verifiedAt;
 
   @CreationTimestamp
@@ -100,6 +103,25 @@ public class SellerSettlementAccount {
         Objects.requireNonNull(verifiedAt, "verifiedAt"));
   }
 
+  public static SellerSettlementAccount createRegisteredBusinessAccount(
+      UUID storeId,
+      String bankCode,
+      String encryptedAccountNumber,
+      String encryptedAccountHolderName,
+      String encryptedBusinessRegistrationNumber) {
+    SellerSettlementAccount account = new SellerSettlementAccount(
+        Objects.requireNonNull(storeId, "storeId"),
+        validBankCode(bankCode),
+        requireText(encryptedAccountNumber, "encryptedAccountNumber"),
+        requireText(encryptedAccountHolderName, "encryptedAccountHolderName"),
+        AccountHolderType.BUSINESS,
+        null,
+        null);
+    account.encryptedBusinessRegistrationNumber =
+        requireText(encryptedBusinessRegistrationNumber, "encryptedBusinessRegistrationNumber");
+    return account;
+  }
+
   public void replaceVerifiedAccount(
       String bankCode,
       String encryptedAccountNumber,
@@ -114,6 +136,23 @@ public class SellerSettlementAccount {
     this.accountHolderType = Objects.requireNonNull(accountHolderType, "accountHolderType");
     this.providerTransactionId = requireText(providerTransactionId, "providerTransactionId");
     this.verifiedAt = Objects.requireNonNull(verifiedAt, "verifiedAt");
+    this.encryptedBusinessRegistrationNumber = null;
+  }
+
+  public void replaceRegisteredBusinessAccount(
+      String bankCode,
+      String encryptedAccountNumber,
+      String encryptedAccountHolderName,
+      String encryptedBusinessRegistrationNumber) {
+    this.bankCode = validBankCode(bankCode);
+    this.encryptedAccountNumber = requireText(encryptedAccountNumber, "encryptedAccountNumber");
+    this.encryptedAccountHolderName =
+        requireText(encryptedAccountHolderName, "encryptedAccountHolderName");
+    this.encryptedBusinessRegistrationNumber =
+        requireText(encryptedBusinessRegistrationNumber, "encryptedBusinessRegistrationNumber");
+    this.accountHolderType = AccountHolderType.BUSINESS;
+    this.providerTransactionId = null;
+    this.verifiedAt = null;
   }
 
   private static String validBankCode(String value) {

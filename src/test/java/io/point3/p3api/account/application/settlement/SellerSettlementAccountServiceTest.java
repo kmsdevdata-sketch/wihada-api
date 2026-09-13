@@ -1,6 +1,8 @@
 package io.point3.p3api.account.application.settlement;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -8,21 +10,14 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import io.point3.p3api.account.application.port.AccountRealNameVerificationException;
 import io.point3.p3api.account.application.port.AccountRealNameVerificationPort;
-import io.point3.p3api.account.application.port.AccountRealNameVerificationRequest;
-import io.point3.p3api.account.application.port.AccountRealNameVerificationResult;
-import io.point3.p3api.account.application.port.AccountVerificationProviderError;
 import io.point3.p3api.account.application.port.SensitiveDataCipher;
 import io.point3.p3api.account.application.settlement.port.SellerSettlementAccountPersistencePort;
 import io.point3.p3api.account.domain.entity.SellerSettlementAccount;
 import io.point3.p3api.account.domain.type.AccountHolderType;
 import io.point3.p3api.exception.BaseException;
-import io.point3.p3api.exception.DetailedBaseException;
 import io.point3.p3api.exception.code.AccountErrorCode;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +33,7 @@ class SellerSettlementAccountServiceTest {
       mock(AccountRealNameVerificationPort.class);
   private final SensitiveDataCipher cipher = new TestSensitiveDataCipher();
   private final SellerSettlementAccountService service =
-      new SellerSettlementAccountService(persistencePort, verificationPort, cipher);
+      new SellerSettlementAccountService(persistencePort, cipher);
 
   @BeforeEach
   void setUp() {
@@ -47,119 +42,81 @@ class SellerSettlementAccountServiceTest {
   }
 
   @Test
-  @DisplayName("개인 정산계좌를 실명조회한 뒤 암호화하여 저장한다")
-  void registersPersonalSettlementAccount() {
+  @DisplayName("사업자 정산계좌를 외부 실명조회 없이 암호화하여 저장한다")
+  void registersBusinessSettlementAccount() {
     UUID storeId = UUID.randomUUID();
-    Instant verifiedAt = Instant.parse("2026-09-11T01:00:00Z");
-    when(verificationPort.verify(any()))
-        .thenReturn(new AccountRealNameVerificationResult(
-            "transaction-id", "004", "국민은행", "123456789012", "홍길동", "1", verifiedAt));
 
-    SellerSettlementAccountResult result =
-        service.register(new RegisterSellerSettlementAccountCommand(
-            storeId,
-            "004",
-            "123-456-789012",
-            " 홍길동 ",
-            AccountHolderType.PERSONAL,
-            LocalDate.of(1990, 1, 2),
-            null));
-
-    ArgumentCaptor<AccountRealNameVerificationRequest> requestCaptor =
-        ArgumentCaptor.forClass(AccountRealNameVerificationRequest.class);
-    verify(verificationPort).verify(requestCaptor.capture());
-    assertEquals("900102", requestCaptor.getValue().accountHolderInfo());
-    assertEquals(" ", requestCaptor.getValue().accountHolderInfoType());
+    SellerSettlementAccountResult result = service.register(new RegisterSellerSettlementAccountCommand(
+        storeId, "004", "123-456-789012", " 홍길동 ", "1234567890"));
 
     ArgumentCaptor<SellerSettlementAccount> accountCaptor =
         ArgumentCaptor.forClass(SellerSettlementAccount.class);
     verify(persistencePort).save(accountCaptor.capture());
-    assertEquals("encrypted:123456789012", accountCaptor.getValue().getEncryptedAccountNumber());
-    assertEquals("encrypted:홍길동", accountCaptor.getValue().getEncryptedAccountHolderName());
+    verify(verificationPort, never()).verify(any());
+    SellerSettlementAccount account = accountCaptor.getValue();
+    assertEquals(AccountHolderType.BUSINESS, account.getAccountHolderType());
+    assertEquals("encrypted:123456789012", account.getEncryptedAccountNumber());
+    assertEquals("encrypted:홍길동", account.getEncryptedAccountHolderName());
+    assertEquals("encrypted:1234567890", account.getEncryptedBusinessRegistrationNumber());
+    assertNull(account.getProviderTransactionId());
+    assertNull(account.getVerifiedAt());
     assertEquals("********9012", result.accountNumberMasked());
     assertEquals("KB국민은행", result.bankName());
+    assertEquals("******7890", result.businessRegistrationNumberMasked());
+    assertNull(result.verifiedAt());
   }
 
   @Test
-  @DisplayName("사업자번호의 구분자를 제거해 실명조회한다")
+  @DisplayName("사업자등록번호의 구분자를 제거해 저장한다")
   void normalizesBusinessRegistrationNumber() {
-    when(verificationPort.verify(any()))
-        .thenReturn(new AccountRealNameVerificationResult(
-            "transaction-id",
-            "088",
-            "신한은행",
-            "1234567890",
-            "위하다",
-            "1",
-            Instant.parse("2026-09-11T01:00:00Z")));
-
     service.register(new RegisterSellerSettlementAccountCommand(
-        UUID.randomUUID(),
-        "088",
-        "1234567890",
-        "위하다",
-        AccountHolderType.BUSINESS,
-        null,
-        "123-45-67890"));
+        UUID.randomUUID(), "088", "1234567890", "위하다", "123-45-67890"));
 
-    ArgumentCaptor<AccountRealNameVerificationRequest> requestCaptor =
-        ArgumentCaptor.forClass(AccountRealNameVerificationRequest.class);
-    verify(verificationPort).verify(requestCaptor.capture());
-    assertEquals("2", requestCaptor.getValue().accountHolderInfoType());
-    assertEquals("1234567890", requestCaptor.getValue().accountHolderInfo());
+    ArgumentCaptor<SellerSettlementAccount> accountCaptor =
+        ArgumentCaptor.forClass(SellerSettlementAccount.class);
+    verify(persistencePort).save(accountCaptor.capture());
+    assertEquals(
+        "encrypted:1234567890",
+        accountCaptor.getValue().getEncryptedBusinessRegistrationNumber());
   }
 
   @Test
-  @DisplayName("실명조회 실패 시 계좌를 저장하지 않는다")
-  void doesNotSaveWhenVerificationFails() {
-    when(verificationPort.verify(any()))
-        .thenThrow(new AccountRealNameVerificationException(
-            AccountRealNameVerificationException.Type.HOLDER_MISMATCH));
-
+  @DisplayName("10자리가 아닌 사업자등록번호는 거절한다")
+  void rejectsInvalidBusinessRegistrationNumber() {
     BaseException exception = assertThrows(
         BaseException.class,
         () -> service.register(new RegisterSellerSettlementAccountCommand(
-            UUID.randomUUID(),
-            "004",
-            "123456789012",
-            "홍길동",
-            AccountHolderType.PERSONAL,
-            LocalDate.of(1990, 1, 2),
-            null)));
+            UUID.randomUUID(), "004", "123456789012", "홍길동", "123456789")));
 
-    assertEquals(AccountErrorCode.ACCOUNT_HOLDER_MISMATCH, exception.getErrorCode());
+    assertEquals(AccountErrorCode.SETTLEMENT_ACCOUNT_INPUT_INVALID, exception.getErrorCode());
     verify(persistencePort, never()).save(any());
+    verify(verificationPort, never()).verify(any());
   }
 
   @Test
-  @DisplayName("실명조회 거절 사유를 API 응답용 상세 정보로 변환한다")
-  void convertsVerificationProviderErrorDetail() {
-    when(verificationPort.verify(any()))
-        .thenThrow(new AccountRealNameVerificationException(
-            AccountRealNameVerificationException.Type.REJECTED,
-            new AccountVerificationProviderError(
-                200, "A0000", null, "123", "계좌번호 오류")));
+  @DisplayName("정산계좌 변경 등록은 기존 계좌를 사업자 계좌로 교체한다")
+  void replacesSettlementAccount() {
+    UUID storeId = UUID.randomUUID();
+    SellerSettlementAccount existing = SellerSettlementAccount.create(
+        storeId,
+        "004",
+        "encrypted:old-account",
+        "encrypted:이전",
+        AccountHolderType.PERSONAL,
+        "provider-transaction",
+        Instant.parse("2026-09-11T01:00:00Z"));
+    when(persistencePort.findByStoreId(storeId)).thenReturn(Optional.of(existing));
 
-    DetailedBaseException exception = assertThrows(
-        DetailedBaseException.class,
-        () -> service.register(new RegisterSellerSettlementAccountCommand(
-            UUID.randomUUID(),
-            "004",
-            "123456789012",
-            "홍길동",
-            AccountHolderType.PERSONAL,
-            LocalDate.of(1990, 1, 2),
-            null)));
+    service.register(new RegisterSellerSettlementAccountCommand(
+        storeId, "090", "987654321", "새 예금주", "987-65-43210"));
 
-    assertEquals(AccountErrorCode.ACCOUNT_VERIFICATION_REJECTED, exception.getErrorCode());
-    assertEquals("계좌번호 오류", exception.getDetail());
-    @SuppressWarnings("unchecked")
-    Map<String, Object> provider =
-        (Map<String, Object>) exception.getMetadata().get("provider");
-    assertEquals("KFTC_OPEN_BANKING", provider.get("name"));
-    assertEquals("123", provider.get("bankResponseCode"));
-    assertEquals("계좌번호 오류", provider.get("bankResponseMessage"));
-    verify(persistencePort, never()).save(any());
+    assertEquals(AccountHolderType.BUSINESS, existing.getAccountHolderType());
+    assertEquals("090", existing.getBankCode());
+    assertEquals("encrypted:987654321", existing.getEncryptedAccountNumber());
+    assertEquals("encrypted:새 예금주", existing.getEncryptedAccountHolderName());
+    assertEquals("encrypted:9876543210", existing.getEncryptedBusinessRegistrationNumber());
+    assertNull(existing.getProviderTransactionId());
+    assertNull(existing.getVerifiedAt());
   }
 
   @Test
@@ -168,30 +125,22 @@ class SellerSettlementAccountServiceTest {
     BaseException exception = assertThrows(
         BaseException.class,
         () -> service.register(new RegisterSellerSettlementAccountCommand(
-            UUID.randomUUID(),
-            "999",
-            "123456789012",
-            "홍길동",
-            AccountHolderType.PERSONAL,
-            LocalDate.of(1990, 1, 2),
-            null)));
+            UUID.randomUUID(), "999", "123456789012", "홍길동", "1234567890")));
 
     assertEquals(AccountErrorCode.SETTLEMENT_BANK_UNSUPPORTED, exception.getErrorCode());
     verify(verificationPort, never()).verify(any());
   }
 
   @Test
-  @DisplayName("정산계좌 조회 시 복호화한 예금주와 마스킹 계좌번호를 반환한다")
+  @DisplayName("정산계좌 조회 시 복호화한 예금주와 마스킹 정보를 반환한다")
   void getsSettlementAccount() {
     UUID storeId = UUID.randomUUID();
-    SellerSettlementAccount account = SellerSettlementAccount.create(
+    SellerSettlementAccount account = SellerSettlementAccount.createRegisteredBusinessAccount(
         storeId,
         "090",
         "encrypted:1234567890123",
         "encrypted:홍길동",
-        AccountHolderType.PERSONAL,
-        "transaction-id",
-        Instant.parse("2026-09-11T01:00:00Z"));
+        "encrypted:1234567890");
     when(persistencePort.findByStoreId(storeId)).thenReturn(Optional.of(account));
 
     SellerSettlementAccountResult result = service.get(storeId);
@@ -199,11 +148,12 @@ class SellerSettlementAccountServiceTest {
     assertEquals("카카오뱅크", result.bankName());
     assertEquals("*********0123", result.accountNumberMasked());
     assertEquals("홍길동", result.accountHolderName());
+    assertEquals("******7890", result.businessRegistrationNumberMasked());
   }
 
   @Test
-  @DisplayName("운영자 정산계좌 조회 시 원문 계좌번호와 예금주를 반환한다")
-  void getsSettlementAccountForOperator() {
+  @DisplayName("기존 데이터에 사업자등록번호가 없어도 정산계좌 조회는 유지한다")
+  void getsLegacySettlementAccount() {
     UUID storeId = UUID.randomUUID();
     SellerSettlementAccount account = SellerSettlementAccount.create(
         storeId,
@@ -211,8 +161,27 @@ class SellerSettlementAccountServiceTest {
         "encrypted:1234567890123",
         "encrypted:홍길동",
         AccountHolderType.PERSONAL,
-        "transaction-id",
+        "provider-transaction",
         Instant.parse("2026-09-11T01:00:00Z"));
+    when(persistencePort.findByStoreId(storeId)).thenReturn(Optional.of(account));
+
+    SellerSettlementAccountResult result = service.get(storeId);
+
+    assertEquals("카카오뱅크", result.bankName());
+    assertEquals("*********0123", result.accountNumberMasked());
+    assertNull(result.businessRegistrationNumberMasked());
+  }
+
+  @Test
+  @DisplayName("운영자 정산계좌 조회 시 원문 계좌번호와 마스킹 사업자번호를 반환한다")
+  void getsSettlementAccountForOperator() {
+    UUID storeId = UUID.randomUUID();
+    SellerSettlementAccount account = SellerSettlementAccount.createRegisteredBusinessAccount(
+        storeId,
+        "090",
+        "encrypted:1234567890123",
+        "encrypted:홍길동",
+        "encrypted:1234567890");
     when(persistencePort.findByStoreId(storeId)).thenReturn(Optional.of(account));
 
     OperatorSettlementAccountResult result = service.getForOperator(storeId);
@@ -221,6 +190,22 @@ class SellerSettlementAccountServiceTest {
     assertEquals("카카오뱅크", result.bankName());
     assertEquals("홍길동", result.accountHolderName());
     assertEquals("1234567890123", result.accountNumber());
+    assertEquals("******7890", result.businessRegistrationNumberMasked());
+  }
+
+  @Test
+  @DisplayName("민감정보는 평문 그대로 저장하지 않는다")
+  void doesNotStoreSensitiveDataAsPlainText() {
+    service.register(new RegisterSellerSettlementAccountCommand(
+        UUID.randomUUID(), "004", "123456789012", "홍길동", "1234567890"));
+
+    ArgumentCaptor<SellerSettlementAccount> accountCaptor =
+        ArgumentCaptor.forClass(SellerSettlementAccount.class);
+    verify(persistencePort).save(accountCaptor.capture());
+    SellerSettlementAccount account = accountCaptor.getValue();
+    assertNotEquals("123456789012", account.getEncryptedAccountNumber());
+    assertNotEquals("홍길동", account.getEncryptedAccountHolderName());
+    assertNotEquals("1234567890", account.getEncryptedBusinessRegistrationNumber());
   }
 
   @Test

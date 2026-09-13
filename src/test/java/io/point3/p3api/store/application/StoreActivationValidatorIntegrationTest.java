@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.point3.p3api.IntegrationTestSupport;
 import io.point3.p3api.account.application.settlement.port.SellerSettlementAccountPersistencePort;
 import io.point3.p3api.account.domain.entity.SellerSettlementAccount;
-import io.point3.p3api.account.domain.type.AccountHolderType;
 import io.point3.p3api.asset.domain.entity.Asset;
 import io.point3.p3api.asset.infrastructure.persistence.AssetJpaRepository;
 import io.point3.p3api.exception.BaseException;
@@ -30,7 +29,6 @@ import io.point3.p3api.user.domain.type.SignupProvider;
 import io.point3.p3api.user.domain.type.UserRole;
 import io.point3.p3api.user.infrastructure.persistence.UserJpaRepository;
 import java.time.DayOfWeek;
-import java.time.Instant;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
@@ -104,14 +102,12 @@ class StoreActivationValidatorIntegrationTest extends IntegrationTestSupport {
     }
     store.updateCancellationRefundPolicy("픽업 7일 전 100% 환불");
     storeJpaRepository.saveAndFlush(store);
-    sellerSettlementAccountPersistencePort.save(SellerSettlementAccount.create(
+    sellerSettlementAccountPersistencePort.save(SellerSettlementAccount.createRegisteredBusinessAccount(
         storeId,
         "004",
         "encrypted-account-number",
         "encrypted-account-holder",
-        AccountHolderType.BUSINESS,
-        "provider-transaction-id",
-        Instant.now()));
+        "encrypted-business-registration-number"));
   }
 
   private List<StoreNotice> completeNotices(UUID storeId) {
