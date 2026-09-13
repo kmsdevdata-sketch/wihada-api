@@ -8,7 +8,9 @@ import io.point3.p3api.exception.code.PaymentErrorCode;
 import io.point3.p3api.order.application.option.OrderOptionRowResolver;
 import io.point3.p3api.order.application.port.OrderConfirmationPersistencePort;
 import io.point3.p3api.order.application.port.OrderPersistencePort;
+import io.point3.p3api.order.application.refund.OrderRefundCalculationResolver;
 import io.point3.p3api.order.application.result.OrderDetailResult;
+import io.point3.p3api.order.application.result.OrderRefundQuoteResult;
 import io.point3.p3api.order.application.result.OrderResult;
 import io.point3.p3api.order.domain.entity.Order;
 import io.point3.p3api.payment.application.port.PaymentAttemptPersistencePort;
@@ -37,6 +39,7 @@ public class OrderQueryService implements OrderQueryUseCase {
   private final PaymentAttemptPersistencePort paymentAttemptPersistencePort;
   private final RefundPersistencePort refundPersistencePort;
   private final OrderReferenceAssetDeliveryService orderReferenceAssetDeliveryService;
+  private final OrderRefundCalculationResolver orderRefundCalculationResolver;
   private final Clock clock;
 
   @Override
@@ -82,6 +85,15 @@ public class OrderQueryService implements OrderQueryUseCase {
     return toDetail(orderPersistencePort
         .findByIdAndStoreId(orderId, storeId)
         .orElseThrow(() -> new BaseException(OrderErrorCode.ORDER_NOT_FOUND)));
+  }
+
+  @Override
+  public OrderRefundQuoteResult getSellerOrderRefundQuote(UUID orderId, UUID storeId) {
+    Order order = orderPersistencePort
+        .findByIdAndStoreId(orderId, storeId)
+        .orElseThrow(() -> new BaseException(OrderErrorCode.ORDER_NOT_FOUND));
+    return OrderRefundQuoteResult.from(
+        order.getId(), orderRefundCalculationResolver.resolve(order, Instant.now(clock)));
   }
 
   private OrderDetailResult toDetail(Order order) {
