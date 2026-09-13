@@ -17,7 +17,8 @@ import io.point3.p3api.order.application.port.OrderConfirmationPersistencePort;
 import io.point3.p3api.order.application.port.OrderPersistencePort;
 import io.point3.p3api.order.application.port.OrderStatusHistoryPersistencePort;
 import io.point3.p3api.order.application.query.order.OrderReferenceAssetDeliveryService;
-import io.point3.p3api.order.application.refund.OrderRefundPolicyCalculator;
+import io.point3.p3api.order.application.refund.OrderRefundCalculation;
+import io.point3.p3api.order.application.refund.OrderRefundCalculationResolver;
 import io.point3.p3api.order.application.result.OrderDetailResult;
 import io.point3.p3api.order.application.result.OrderResult;
 import io.point3.p3api.order.domain.entity.Order;
@@ -36,7 +37,6 @@ import io.point3.p3api.payment.domain.entity.Refund;
 import io.point3.p3api.payment.domain.type.RefundOutcome;
 import io.point3.p3api.payment.domain.type.RefundStatus;
 import io.point3.p3api.store.application.port.StorePersistencePort;
-import io.point3.p3api.store.application.refundpolicy.port.StoreRefundPolicyPersistencePort;
 import io.point3.p3api.store.domain.entity.Store;
 import java.time.Clock;
 import java.time.Instant;
@@ -59,8 +59,7 @@ public class OrderStateService implements OrderStateUseCase {
   private final PaymentAttemptPersistencePort paymentAttemptPersistencePort;
   private final RefundPersistencePort refundPersistencePort;
   private final Point3PaymentPort point3PaymentPort;
-  private final OrderRefundPolicyCalculator orderRefundPolicyCalculator;
-  private final StoreRefundPolicyPersistencePort storeRefundPolicyPersistencePort;
+  private final OrderRefundCalculationResolver orderRefundCalculationResolver;
   private final Clock clock;
   private final StorePersistencePort storePersistencePort;
   private final NotificationCreateUseCase notificationCreateUseCase;
@@ -108,17 +107,14 @@ public class OrderStateService implements OrderStateUseCase {
       return existingResult;
     }
     validateRefundable(order);
-    Instant requestedAt = Instant.now(clock);
-    var calculation = orderRefundPolicyCalculator.calculate(
-        order.getPaidAmount(),
-        order.getPickupAt(),
-        requestedAt,
-        storeRefundPolicyPersistencePort.findAllByStoreId(order.getStoreId()));
+    Instant processingAt = Instant.now(clock);
+    OrderRefundCalculation calculation =
+        orderRefundCalculationResolver.resolve(order, processingAt);
     Refund refund = Refund.create(
         order.getId(),
         order.getPaymentAttemptId(),
         command.sellerUserId(),
-        calculation.amount(),
+        calculation.refundAmount(),
         calculation.refundRate(),
         command.reason());
     refund.startProcessing();
@@ -127,11 +123,12 @@ public class OrderStateService implements OrderStateUseCase {
         .findById(order.getPaymentAttemptId())
         .orElseThrow(() -> new BaseException(PaymentErrorCode.PAYMENT_ATTEMPT_NOT_FOUND));
     if (refund.getAmount() == 0) {
-      completeRefund(order, refund, command, requestedAt);
+      completeRefund(order, refund, command, processingAt);
       return toDetail(order);
     }
     Point3RefundResult result = requestPoint3Refund(paymentAttempt, refund, command.reason());
-    applyRefundResult(order, refund, command.sellerUserId(), command.reason(), result);
+    applyRefundResult(
+        order, refund, command.sellerUserId(), command.reason(), result, processingAt);
     refundPersistencePort.save(refund);
 
     return toDetail(order);
@@ -151,7 +148,8 @@ public class OrderStateService implements OrderStateUseCase {
         .findById(order.getPaymentAttemptId())
         .orElseThrow(() -> new BaseException(PaymentErrorCode.PAYMENT_ATTEMPT_NOT_FOUND));
     Point3RefundResult result = refreshPoint3Refund(paymentAttempt, refund);
-    applyRefundResult(order, refund, command.sellerUserId(), refund.getReason(), result);
+    applyRefundResult(
+        order, refund, command.sellerUserId(), refund.getReason(), result, Instant.now(clock));
     refundPersistencePort.save(refund);
 
     return toDetail(order);
@@ -174,6 +172,7 @@ public class OrderStateService implements OrderStateUseCase {
         order,
         command.sellerUserId(),
         "MANUAL_REFUND_COMPLETED",
+        completedAt,
         () -> order.refund(refund.getReason()));
     refund.completeManually(command.sellerUserId(), completedAt);
     notifyBuyerRefundCompleted(order);
@@ -187,7 +186,11 @@ public class OrderStateService implements OrderStateUseCase {
   private void completeRefund(
       Order order, Refund refund, RefundOrderCommand command, Instant completedAt) {
     changeStatus(
-        order, command.sellerUserId(), command.reason(), () -> order.refund(command.reason()));
+        order,
+        command.sellerUserId(),
+        command.reason(),
+        completedAt,
+        () -> order.refund(command.reason()));
     refund.completeZeroAmount(command.sellerUserId(), completedAt);
     notifyBuyerRefundCompleted(order);
     chatTimelineItemPublisher.publishOrderRefundCompleted(
@@ -201,7 +204,7 @@ public class OrderStateService implements OrderStateUseCase {
       String reason,
       String providerRefundId,
       Instant completedAt) {
-    changeStatus(order, changedBy, reason, () -> order.refund(reason));
+    changeStatus(order, changedBy, reason, completedAt, () -> order.refund(reason));
     refund.completeAutomatically(providerRefundId, changedBy, completedAt);
     notifyBuyerRefundCompleted(order);
     chatTimelineItemPublisher.publishOrderRefundCompleted(
@@ -215,7 +218,7 @@ public class OrderStateService implements OrderStateUseCase {
     if (order.getStatus() == OrderStatus.REFUNDED && refund.isManualCompleted()) {
       return;
     }
-    if (order.getStatus() != OrderStatus.REFUND_REQUESTED
+    if ((order.getStatus() != OrderStatus.PAID && order.getStatus() != OrderStatus.REFUND_REQUESTED)
         || refund.getStatus() != RefundStatus.FAILED
         || refund.getOutcome() != RefundOutcome.MANUAL_REQUIRED) {
       throw new BaseException(OrderErrorCode.ORDER_STATUS_FORBIDDEN);
@@ -250,7 +253,8 @@ public class OrderStateService implements OrderStateUseCase {
           .findById(order.getPaymentAttemptId())
           .orElseThrow(() -> new BaseException(PaymentErrorCode.PAYMENT_ATTEMPT_NOT_FOUND));
       Point3RefundResult result = refreshPoint3Refund(paymentAttempt, latest);
-      applyRefundResult(order, latest, sellerUserId, latest.getReason(), result);
+      applyRefundResult(
+          order, latest, sellerUserId, latest.getReason(), result, Instant.now(clock));
       refundPersistencePort.save(latest);
       return toDetail(order);
     }
@@ -311,11 +315,15 @@ public class OrderStateService implements OrderStateUseCase {
   }
 
   private void applyRefundResult(
-      Order order, Refund refund, UUID changedBy, String reason, Point3RefundResult result) {
+      Order order,
+      Refund refund,
+      UUID changedBy,
+      String reason,
+      Point3RefundResult result,
+      Instant processingAt) {
     switch (result.outcome()) {
       case COMPLETED ->
-        completeRefund(
-            order, refund, changedBy, reason, result.providerRefundId(), Instant.now(clock));
+        completeRefund(order, refund, changedBy, reason, result.providerRefundId(), processingAt);
       case PROCESSING -> {
         refund.keepProcessing(
             result.providerRefundId(),
@@ -330,7 +338,7 @@ public class OrderStateService implements OrderStateUseCase {
             result.failureCode(),
             result.failureMessage(),
             result.failureDetails(),
-            Instant.now(clock));
+            processingAt);
     }
   }
 
@@ -347,6 +355,11 @@ public class OrderStateService implements OrderStateUseCase {
   }
 
   private void changeStatus(Order order, UUID changedBy, String reason, Runnable transition) {
+    changeStatus(order, changedBy, reason, Instant.now(clock), transition);
+  }
+
+  private void changeStatus(
+      Order order, UUID changedBy, String reason, Instant changedAt, Runnable transition) {
     OrderStatus previousStatus = order.getStatus();
     try {
       transition.run();
@@ -355,7 +368,7 @@ public class OrderStateService implements OrderStateUseCase {
     }
     if (previousStatus != order.getStatus()) {
       orderStatusHistoryPersistencePort.save(OrderStatusHistory.create(
-          order.getId(), previousStatus, order.getStatus(), changedBy, reason, Instant.now(clock)));
+          order.getId(), previousStatus, order.getStatus(), changedBy, reason, changedAt));
     }
   }
 

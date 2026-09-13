@@ -15,7 +15,9 @@ import io.point3.p3api.inquiry.infrastructure.persistence.InquiryJpaRepository;
 import io.point3.p3api.notification.domain.type.NotificationType;
 import io.point3.p3api.notification.infrastructure.persistence.NotificationJpaRepository;
 import io.point3.p3api.order.application.query.order.OrderQueryUseCase;
+import io.point3.p3api.order.application.refund.OrderRefundCalculationBasis;
 import io.point3.p3api.order.application.result.OrderDetailResult;
+import io.point3.p3api.order.application.result.OrderRefundQuoteResult;
 import io.point3.p3api.order.application.result.OrderResult;
 import io.point3.p3api.order.domain.entity.Order;
 import io.point3.p3api.order.domain.entity.OrderConfirmation;
@@ -45,10 +47,12 @@ import io.point3.p3api.user.domain.entity.User;
 import io.point3.p3api.user.domain.type.SignupProvider;
 import io.point3.p3api.user.domain.type.UserRole;
 import io.point3.p3api.user.infrastructure.persistence.UserJpaRepository;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
@@ -108,9 +112,13 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
   @Autowired
   private RecordingPoint3PaymentPort point3PaymentPort;
 
+  @Autowired
+  private MutableClock testClock;
+
   @BeforeEach
   void resetPoint3PaymentPort() {
     point3PaymentPort.reset();
+    testClock.setInstant(todayAtNoon());
   }
 
   @TestConfiguration
@@ -119,6 +127,39 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
     @Primary
     RecordingPoint3PaymentPort point3PaymentPort() {
       return new RecordingPoint3PaymentPort();
+    }
+
+    @Bean
+    @Primary
+    MutableClock mutableClock() {
+      return new MutableClock(Instant.now());
+    }
+  }
+
+  static class MutableClock extends Clock {
+    private Instant instant;
+
+    MutableClock(Instant instant) {
+      this.instant = instant;
+    }
+
+    void setInstant(Instant instant) {
+      this.instant = instant;
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return ZoneOffset.UTC;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return this;
+    }
+
+    @Override
+    public Instant instant() {
+      return instant;
     }
   }
 
@@ -284,6 +325,84 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
     assertEquals(80, refunded.refunds().getFirst().refundRate());
     assertEquals(1, point3PaymentPort.refundCallCount);
     assertEquals(32_800, point3PaymentPort.lastRefundAmount);
+  }
+
+  @Test
+  @DisplayName("구매자 환불 요청 주문은 판매자가 늦게 처리해도 요청 시각 기준 환불률을 적용한다")
+  void refundsRequestedOrderUsingRefundRequestedAt() {
+    Instant requestedAt = todayAtNoon();
+    testClock.setInstant(requestedAt);
+    Fixture fixture = prepareFixture(
+        "order-refund-requested-at",
+        7,
+        List.of(new PolicyRule(7, 100), new PolicyRule(5, 80), new PolicyRule(3, 50)));
+    OrderResult requested = requestRefund(fixture);
+    OrderRefundQuoteResult quote = orderQueryUseCase.getSellerOrderRefundQuote(
+        fixture.order().getId(), fixture.store().getId());
+
+    testClock.setInstant(requestedAt.plus(2, ChronoUnit.DAYS));
+    OrderDetailResult refunded = orderStateUseCase.refund(RefundOrderCommand.of(
+        fixture.order().getId(), fixture.store().getId(), fixture.seller().getId(), "환불 요청 승인"));
+
+    assertEquals(requested.refundRequestedAt(), quote.calculationBaseAt());
+    assertEquals(OrderRefundCalculationBasis.REFUND_REQUESTED_AT, quote.calculationBasis());
+    assertEquals(41_000, quote.refundAmount());
+    assertEquals(100, quote.refundRate());
+    assertEquals(41_000, refunded.refunds().getFirst().amount());
+    assertEquals(100, refunded.refunds().getFirst().refundRate());
+    assertEquals(41_000, point3PaymentPort.lastRefundAmount);
+  }
+
+  @Test
+  @DisplayName("환불 quote 조회는 Refund 생성과 주문 상태, 타임라인, 알림을 변경하지 않는다")
+  void quotesRefundWithoutSideEffects() {
+    Fixture fixture = prepareFixture(
+        "order-refund-quote-side-effect",
+        7,
+        List.of(new PolicyRule(7, 100), new PolicyRule(5, 80)));
+    requestRefund(fixture);
+    long refundCount = refundJpaRepository.count();
+    long timelineCount = chatTimelineItemJpaRepository.count();
+    long notificationCount = notificationJpaRepository.count();
+
+    OrderRefundQuoteResult quote = orderQueryUseCase.getSellerOrderRefundQuote(
+        fixture.order().getId(), fixture.store().getId());
+    Order found = orderJpaRepository.findById(fixture.order().getId()).orElseThrow();
+
+    assertEquals(41_000, quote.refundAmount());
+    assertEquals(OrderStatus.REFUND_REQUESTED, found.getStatus());
+    assertEquals(refundCount, refundJpaRepository.count());
+    assertEquals(timelineCount, chatTimelineItemJpaRepository.count());
+    assertEquals(notificationCount, notificationJpaRepository.count());
+  }
+
+  @Test
+  @DisplayName("다른 스토어의 주문은 환불 quote를 조회할 수 없다")
+  void rejectsRefundQuoteForOtherStore() {
+    Fixture fixture = prepareFixture("order-refund-quote-owner");
+    Fixture other = prepareFixture("order-refund-quote-other");
+
+    BaseException exception = assertThrows(
+        BaseException.class,
+        () -> orderQueryUseCase.getSellerOrderRefundQuote(
+            fixture.order().getId(), other.store().getId()));
+
+    assertEquals(OrderErrorCode.ORDER_NOT_FOUND, exception.getErrorCode());
+  }
+
+  @Test
+  @DisplayName("환불 불가능 상태의 주문은 환불 quote를 조회할 수 없다")
+  void rejectsRefundQuoteForNotRefundableOrder() {
+    Fixture fixture = prepareFixture("order-refund-quote-picked-up");
+    orderStateUseCase.pickUp(
+        CompleteOrderPickupCommand.of(fixture.order().getId(), fixture.store().getId()));
+
+    BaseException exception = assertThrows(
+        BaseException.class,
+        () -> orderQueryUseCase.getSellerOrderRefundQuote(
+            fixture.order().getId(), fixture.store().getId()));
+
+    assertEquals(OrderErrorCode.ORDER_STATUS_FORBIDDEN, exception.getErrorCode());
   }
 
   @Test
@@ -647,17 +766,26 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
   }
 
   @Test
-  @DisplayName("구매자 취소 요청 전 판매자 환불은 차단한다")
-  void rejectsSellerRefundBeforeBuyerRequest() {
-    Fixture fixture = prepareFixture("order-direct-refund");
+  @DisplayName("PAID 상태의 판매자 직접 환불은 현재 처리 시각 기준으로 계산한다")
+  void refundsPaidOrderUsingCurrentTime() {
+    Fixture fixture = prepareFixture(
+        "order-direct-refund",
+        5,
+        List.of(new PolicyRule(7, 100), new PolicyRule(5, 80), new PolicyRule(3, 50)));
 
-    BaseException exception = assertThrows(
-        BaseException.class,
-        () -> orderStateUseCase.refund(RefundOrderCommand.of(
-            fixture.order().getId(), fixture.store().getId(), fixture.seller().getId(), "직접 환불")));
+    OrderRefundQuoteResult quote = orderQueryUseCase.getSellerOrderRefundQuote(
+        fixture.order().getId(), fixture.store().getId());
+    OrderDetailResult refunded = orderStateUseCase.refund(RefundOrderCommand.of(
+        fixture.order().getId(), fixture.store().getId(), fixture.seller().getId(), "직접 환불"));
 
-    assertEquals(OrderErrorCode.ORDER_STATUS_FORBIDDEN, exception.getErrorCode());
-    assertEquals(0, point3PaymentPort.refundCallCount);
+    assertEquals(OrderRefundCalculationBasis.CURRENT_TIME, quote.calculationBasis());
+    assertEquals(80, quote.refundRate());
+    assertEquals(32_800, quote.refundAmount());
+    assertEquals(OrderStatus.REFUNDED, refunded.order().status());
+    assertEquals(32_800, refunded.refunds().getFirst().amount());
+    assertEquals(80, refunded.refunds().getFirst().refundRate());
+    assertEquals(1, point3PaymentPort.refundCallCount);
+    assertEquals(32_800, point3PaymentPort.lastRefundAmount);
   }
 
   @Test
@@ -776,6 +904,13 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
   private Instant pickupAt(int daysFromToday) {
     return LocalDate.now(KOREA_ZONE_ID)
         .plus(daysFromToday, ChronoUnit.DAYS)
+        .atTime(LocalTime.NOON)
+        .atZone(KOREA_ZONE_ID)
+        .toInstant();
+  }
+
+  private Instant todayAtNoon() {
+    return LocalDate.now(KOREA_ZONE_ID)
         .atTime(LocalTime.NOON)
         .atZone(KOREA_ZONE_ID)
         .toInstant();

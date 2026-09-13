@@ -205,7 +205,7 @@ public class Order {
   }
 
   public void validateRefundable() {
-    if (this.status != OrderStatus.REFUND_REQUESTED) {
+    if (this.status != OrderStatus.PAID && this.status != OrderStatus.REFUND_REQUESTED) {
       throw new IllegalStateException("Order status transition is not allowed");
     }
   }

@@ -83,11 +83,14 @@ class OrderTest {
   }
 
   @Test
-  @DisplayName("취소 요청 전 주문은 환불 완료로 변경할 수 없다")
-  void rejectsRefundBeforeRequest() {
+  @DisplayName("판매자는 결제완료 주문을 직접 환불 완료로 변경할 수 있다")
+  void refundsPaidOrderDirectly() {
     Order order = createOrder();
 
-    assertThrows(IllegalStateException.class, () -> order.refund("판매자 환불 처리"));
+    order.refund("판매자 환불 처리");
+
+    assertEquals(OrderStatus.REFUNDED, order.getStatus());
+    assertEquals("판매자 환불 처리", order.getRefundReason());
   }
 
   @Test

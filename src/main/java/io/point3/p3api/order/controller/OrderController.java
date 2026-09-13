@@ -20,6 +20,7 @@ import io.point3.p3api.order.controller.response.OrderCalendarResponse;
 import io.point3.p3api.order.controller.response.OrderDetailResponse;
 import io.point3.p3api.order.controller.response.OrderListItemResponse;
 import io.point3.p3api.order.controller.response.OrderResponse;
+import io.point3.p3api.order.controller.response.SellerOrderRefundQuoteResponse;
 import io.point3.p3api.order.domain.type.OrderStatus;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
@@ -111,6 +112,16 @@ public class OrderController {
       @PathVariable UUID orderId, @CurrentStoreId UUID storeId) {
     return ApiResponse.ok(
         OrderDetailResponse.from(orderQueryUseCase.getSellerOrder(orderId, storeId)));
+  }
+
+  @GetMapping("/seller/orders/{orderId}/refund-quote")
+  public ApiResponse<SellerOrderRefundQuoteResponse> getSellerOrderRefundQuote(
+      @PathVariable UUID orderId,
+      @CurrentStoreId UUID storeId,
+      @Authenticated CurrentUser currentUser) {
+    RoleGuard.requireSeller(currentUser);
+    return ApiResponse.ok(SellerOrderRefundQuoteResponse.from(
+        orderQueryUseCase.getSellerOrderRefundQuote(orderId, storeId)));
   }
 
   @PatchMapping("/seller/orders/{orderId}/pickup")
