@@ -89,13 +89,11 @@ class SellerSettlementAccountPersistenceAdapterIntegrationTest extends Integrati
   }
 
   private SellerSettlementAccount account(UUID storeId) {
-    return SellerSettlementAccount.create(
+    return SellerSettlementAccount.createRegisteredBusinessAccount(
         storeId,
         "004",
         "encrypted-account-1",
         "encrypted-holder-1",
-        AccountHolderType.PERSONAL,
-        "provider-transaction-1",
-        Instant.parse("2026-09-11T02:00:00Z"));
+        "encrypted-business-registration-number-1");
   }
 }

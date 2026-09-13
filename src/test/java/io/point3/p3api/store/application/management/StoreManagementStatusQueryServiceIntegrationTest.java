@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.point3.p3api.IntegrationTestSupport;
 import io.point3.p3api.account.application.settlement.port.SellerSettlementAccountPersistencePort;
 import io.point3.p3api.account.domain.entity.SellerSettlementAccount;
-import io.point3.p3api.account.domain.type.AccountHolderType;
 import io.point3.p3api.asset.domain.entity.Asset;
 import io.point3.p3api.asset.infrastructure.persistence.AssetJpaRepository;
 import io.point3.p3api.store.application.StoreService;
@@ -26,7 +25,6 @@ import io.point3.p3api.user.domain.type.SignupProvider;
 import io.point3.p3api.user.domain.type.UserRole;
 import io.point3.p3api.user.infrastructure.persistence.UserJpaRepository;
 import java.time.DayOfWeek;
-import java.time.Instant;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
@@ -152,21 +150,19 @@ class StoreManagementStatusQueryServiceIntegrationTest extends IntegrationTestSu
   }
 
   @Test
-  @DisplayName("검증된 정산계좌가 저장된 경우에만 정산계좌 항목을 완료로 판단한다")
-  void completesSettlementAccountOnlyWithVerifiedAccount() {
+  @DisplayName("정산계좌가 등록된 경우 정산계좌 항목을 완료로 판단한다")
+  void completesSettlementAccountWithRegisteredAccount() {
     StoreResult store = createStore();
 
     assertFalse(
         storeManagementStatusQueryService.getStatus(store.id()).items().settlementAccount());
 
-    sellerSettlementAccountPersistencePort.save(SellerSettlementAccount.create(
+    sellerSettlementAccountPersistencePort.save(SellerSettlementAccount.createRegisteredBusinessAccount(
         store.id(),
         "004",
         "encrypted-account-number",
         "encrypted-account-holder",
-        AccountHolderType.BUSINESS,
-        "provider-transaction-id",
-        Instant.parse("2026-09-11T01:00:00Z")));
+        "encrypted-business-registration-number"));
 
     assertTrue(storeManagementStatusQueryService.getStatus(store.id()).items().settlementAccount());
   }

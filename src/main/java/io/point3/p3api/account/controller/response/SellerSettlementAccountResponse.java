@@ -1,7 +1,6 @@
 package io.point3.p3api.account.controller.response;
 
 import io.point3.p3api.account.application.settlement.SellerSettlementAccountResult;
-import io.point3.p3api.account.domain.type.AccountHolderType;
 import java.time.Instant;
 
 public record SellerSettlementAccountResponse(
@@ -9,11 +8,13 @@ public record SellerSettlementAccountResponse(
     String bankName,
     String accountNumberMasked,
     String accountHolderName,
-    AccountHolderType holderType,
+    String businessRegistrationNumberMasked,
+    String registrationStatus,
     String verificationStatus,
     Instant verifiedAt) {
 
-  private static final String VERIFIED = "VERIFIED";
+  private static final String REGISTERED = "REGISTERED";
+  private static final String UNVERIFIED = "UNVERIFIED";
 
   public static SellerSettlementAccountResponse from(SellerSettlementAccountResult result) {
     return new SellerSettlementAccountResponse(
@@ -21,8 +22,9 @@ public record SellerSettlementAccountResponse(
         result.bankName(),
         result.accountNumberMasked(),
         result.accountHolderName(),
-        result.holderType(),
-        VERIFIED,
-        result.verifiedAt());
+        result.businessRegistrationNumberMasked(),
+        REGISTERED,
+        UNVERIFIED,
+        null);
   }
 }

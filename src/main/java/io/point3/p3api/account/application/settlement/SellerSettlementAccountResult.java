@@ -1,6 +1,5 @@
 package io.point3.p3api.account.application.settlement;
 
-import io.point3.p3api.account.domain.type.AccountHolderType;
 import java.time.Instant;
 
 public record SellerSettlementAccountResult(
@@ -8,5 +7,5 @@ public record SellerSettlementAccountResult(
     String bankName,
     String accountNumberMasked,
     String accountHolderName,
-    AccountHolderType holderType,
+    String businessRegistrationNumberMasked,
     Instant verifiedAt) {}

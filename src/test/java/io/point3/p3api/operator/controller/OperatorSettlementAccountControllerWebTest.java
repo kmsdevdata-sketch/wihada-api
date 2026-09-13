@@ -52,7 +52,7 @@ class OperatorSettlementAccountControllerWebTest {
     UUID storeId = UUID.randomUUID();
     when(settlementAccountQueryUseCase.getForOperator(storeId))
         .thenReturn(new OperatorSettlementAccountResult(
-            "090", "카카오뱅크", "홍길동", "1234567890123"));
+            "090", "카카오뱅크", "홍길동", "1234567890123", "******7890"));
 
     mockMvc
         .perform(get("/operator/stores/{storeId}/settlement-account", storeId))
@@ -61,7 +61,8 @@ class OperatorSettlementAccountControllerWebTest {
         .andExpect(jsonPath("$.data.bankCode").value("090"))
         .andExpect(jsonPath("$.data.bankName").value("카카오뱅크"))
         .andExpect(jsonPath("$.data.accountHolderName").value("홍길동"))
-        .andExpect(jsonPath("$.data.accountNumber").value("1234567890123"));
+        .andExpect(jsonPath("$.data.accountNumber").value("1234567890123"))
+        .andExpect(jsonPath("$.data.businessRegistrationNumberMasked").value("******7890"));
 
     verify(settlementAccountQueryUseCase).getForOperator(storeId);
   }

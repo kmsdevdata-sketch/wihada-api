@@ -16,15 +16,9 @@ import io.point3.p3api.account.application.settlement.SellerSettlementAccountReg
 import io.point3.p3api.account.application.settlement.SellerSettlementAccountResult;
 import io.point3.p3api.account.application.settlement.SettlementBankQueryUseCase;
 import io.point3.p3api.account.application.settlement.SettlementBankResult;
-import io.point3.p3api.account.domain.type.AccountHolderType;
 import io.point3.p3api.common.tenant.web.CurrentStoreId;
 import io.point3.p3api.common.web.response.GlobalExceptionHandler;
-import io.point3.p3api.exception.DetailedBaseException;
-import io.point3.p3api.exception.code.AccountErrorCode;
-import java.time.Instant;
-import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -74,26 +68,27 @@ class SellerSettlementAccountControllerWebTest {
                   "bankCode":"004",
                   "accountNumber":"123-456-789012",
                   "accountHolderName":"홍길동",
-                  "holderType":"PERSONAL",
-                  "birthDate":"1990-01-02"
+                  "businessRegistrationNumber":"123-45-67890"
                 }
                 """))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.bankCode").value("004"))
         .andExpect(jsonPath("$.data.bankName").value("KB국민은행"))
         .andExpect(jsonPath("$.data.accountNumberMasked").value("********9012"))
-        .andExpect(jsonPath("$.data.verificationStatus").value("VERIFIED"));
+        .andExpect(jsonPath("$.data.businessRegistrationNumberMasked").value("******7890"))
+        .andExpect(jsonPath("$.data.registrationStatus").value("REGISTERED"))
+        .andExpect(jsonPath("$.data.verificationStatus").value("UNVERIFIED"));
 
     ArgumentCaptor<RegisterSellerSettlementAccountCommand> captor =
         ArgumentCaptor.forClass(RegisterSellerSettlementAccountCommand.class);
     verify(registerUseCase).register(captor.capture());
     assertEquals(storeId, captor.getValue().storeId());
-    assertEquals(LocalDate.of(1990, 1, 2), captor.getValue().birthDate());
+    assertEquals("123-45-67890", captor.getValue().businessRegistrationNumber());
   }
 
   @Test
-  @DisplayName("명의자 유형과 맞지 않는 인증정보를 거부한다")
-  void rejectsMismatchedHolderInformation() throws Exception {
+  @DisplayName("사업자등록번호가 없으면 정산계좌 등록 요청을 거부한다")
+  void rejectsMissingBusinessRegistrationNumber() throws Exception {
     mockMvc
         .perform(put("/seller/store/settlement-account")
             .contentType(MediaType.APPLICATION_JSON)
@@ -101,51 +96,10 @@ class SellerSettlementAccountControllerWebTest {
                 {
                   "bankCode":"004",
                   "accountNumber":"123456789012",
-                  "accountHolderName":"위하다",
-                  "holderType":"BUSINESS",
-                  "birthDate":"1990-01-02"
+                  "accountHolderName":"위하다"
                 }
                 """))
         .andExpect(status().isBadRequest());
-  }
-
-  @Test
-  @DisplayName("정산계좌 실명조회 실패 상세를 응답에 포함한다")
-  void returnsVerificationFailureDetail() throws Exception {
-    when(registerUseCase.register(any()))
-        .thenThrow(new DetailedBaseException(
-            AccountErrorCode.ACCOUNT_VERIFICATION_REJECTED,
-            "계좌번호 오류",
-            Map.of(
-                "provider",
-                Map.of(
-                    "name",
-                    "KFTC_OPEN_BANKING",
-                    "responseCode",
-                    "A0000",
-                    "bankResponseCode",
-                    "123",
-                    "bankResponseMessage",
-                    "계좌번호 오류"))));
-
-    mockMvc
-        .perform(put("/seller/store/settlement-account")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("""
-                {
-                  "bankCode":"004",
-                  "accountNumber":"123456789012",
-                  "accountHolderName":"홍길동",
-                  "holderType":"PERSONAL",
-                  "birthDate":"1990-01-02"
-                }
-                """))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.error.code").value("ACCOUNT_VERIFICATION_REJECTED_400"))
-        .andExpect(jsonPath("$.error.detail").value("계좌번호 오류"))
-        .andExpect(jsonPath("$.error.metadata.provider.name").value("KFTC_OPEN_BANKING"))
-        .andExpect(jsonPath("$.error.metadata.provider.bankResponseCode").value("123"))
-        .andExpect(jsonPath("$.error.metadata.provider.bankResponseMessage").value("계좌번호 오류"));
   }
 
   @Test
@@ -157,7 +111,9 @@ class SellerSettlementAccountControllerWebTest {
         .perform(get("/seller/store/settlement-account"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.accountHolderName").value("홍길동"))
-        .andExpect(jsonPath("$.data.holderType").value("PERSONAL"));
+        .andExpect(jsonPath("$.data.businessRegistrationNumberMasked").value("******7890"))
+        .andExpect(jsonPath("$.data.registrationStatus").value("REGISTERED"))
+        .andExpect(jsonPath("$.data.verificationStatus").value("UNVERIFIED"));
 
     verify(queryUseCase).get(storeId);
   }
@@ -182,8 +138,8 @@ class SellerSettlementAccountControllerWebTest {
         "KB국민은행",
         "********9012",
         "홍길동",
-        AccountHolderType.PERSONAL,
-        Instant.parse("2026-09-11T01:00:00Z"));
+        "******7890",
+        null);
   }
 
   private class CurrentStoreIdArgumentResolver implements HandlerMethodArgumentResolver {
