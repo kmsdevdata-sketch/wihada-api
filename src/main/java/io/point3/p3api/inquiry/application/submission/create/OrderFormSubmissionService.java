@@ -24,10 +24,12 @@ import io.point3.p3api.store.application.port.StorePersistencePort;
 import io.point3.p3api.store.domain.entity.Store;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 /** 주문서 제출 검증/스냅샷/저장 담당 */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class OrderFormSubmissionService implements OrderFormSubmissionCreateUseCase {
@@ -79,8 +81,14 @@ public class OrderFormSubmissionService implements OrderFormSubmissionCreateUseC
         .ifPresent(confirmation -> confirmation.replace());
     Store store = findStore(command.storeId());
     notifySeller(command, command.update(), store);
-    applicationEventPublisher.publishEvent(
-        new OrderFormWaitingEmailEvent(store.getOwnerUserId(), command.inquiryId()));
+    log.info(
+        "Publish order form waiting email event. submissionId={}, inquiryId={}, sellerUserId={}, isUpdate={}",
+        savedSubmission.getId(),
+        command.inquiryId(),
+        store.getOwnerUserId(),
+        command.update());
+    applicationEventPublisher.publishEvent(new OrderFormWaitingEmailEvent(
+        store.getOwnerUserId(), command.inquiryId(), savedSubmission.getId()));
     return savedSubmission;
   }
 
