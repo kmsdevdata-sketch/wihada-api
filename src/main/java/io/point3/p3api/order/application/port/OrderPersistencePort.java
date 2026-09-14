@@ -28,6 +28,8 @@ public interface OrderPersistencePort {
 
   List<Order> findAllByStoreId(UUID storeId);
 
+  List<Order> findAllByIds(List<UUID> orderIds);
+
   List<Order> findSellerOrders(
       SellerOrderListQuery query, Instant startInclusive, Instant endExclusive);
 
@@ -40,6 +42,11 @@ public interface OrderPersistencePort {
       UUID storeId, OrderStatus status, Instant startInclusive, Instant endExclusive);
 
   long sumSucceededPaymentAmount(UUID storeId, Instant startInclusive, Instant endExclusive);
+
+  long countSucceededPayments(UUID storeId, Instant startInclusive, Instant endExclusive);
+
+  List<Order> findSucceededPaymentOrders(
+      UUID storeId, Instant startInclusive, Instant endExclusive);
 
   long countByStoreIdAndStatus(UUID storeId, OrderStatus status);
 

@@ -77,6 +77,11 @@ public class OrderPersistenceAdapter implements OrderPersistencePort {
   }
 
   @Override
+  public List<Order> findAllByIds(List<UUID> orderIds) {
+    return orderJpaRepository.findAllById(orderIds);
+  }
+
+  @Override
   @Transactional(readOnly = true)
   public List<Order> findSellerOrders(
       SellerOrderListQuery query, Instant startInclusive, Instant endExclusive) {
@@ -123,6 +128,19 @@ public class OrderPersistenceAdapter implements OrderPersistencePort {
   public long sumSucceededPaymentAmount(
       UUID storeId, Instant startInclusive, Instant endExclusive) {
     return orderJpaRepository.sumSucceededPaymentAmount(
+        storeId, PaymentAttemptStatus.SUCCEEDED, startInclusive, endExclusive);
+  }
+
+  @Override
+  public long countSucceededPayments(UUID storeId, Instant startInclusive, Instant endExclusive) {
+    return orderJpaRepository.countSucceededPayments(
+        storeId, PaymentAttemptStatus.SUCCEEDED, startInclusive, endExclusive);
+  }
+
+  @Override
+  public List<Order> findSucceededPaymentOrders(
+      UUID storeId, Instant startInclusive, Instant endExclusive) {
+    return orderJpaRepository.findSucceededPaymentOrders(
         storeId, PaymentAttemptStatus.SUCCEEDED, startInclusive, endExclusive);
   }
 

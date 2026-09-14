@@ -36,6 +36,11 @@ public class PaymentAttemptPersistenceAdapter implements PaymentAttemptPersisten
   }
 
   @Override
+  public List<PaymentAttempt> findAllById(List<UUID> paymentAttemptIds) {
+    return paymentAttemptJpaRepository.findAllById(paymentAttemptIds);
+  }
+
+  @Override
   public List<PaymentAttempt> findAllByConfirmationId(UUID confirmationId) {
     return paymentAttemptJpaRepository.findAllByConfirmationIdOrderByCreatedAtDesc(confirmationId);
   }

@@ -8,9 +8,13 @@ import io.point3.p3api.common.web.response.ApiResponse;
 import io.point3.p3api.dashboard.application.query.SellerDashboardQueryCommand;
 import io.point3.p3api.dashboard.application.query.SellerDashboardQueryUseCase;
 import io.point3.p3api.dashboard.application.query.SellerRevenueQueryCommand;
+import io.point3.p3api.dashboard.application.query.SellerRevenueTransactionQueryCommand;
+import io.point3.p3api.dashboard.application.query.SellerRevenueTransactionType;
 import io.point3.p3api.dashboard.controller.response.SellerDashboardResponse;
 import io.point3.p3api.dashboard.controller.response.SellerRevenueResponse;
+import io.point3.p3api.dashboard.controller.response.SellerRevenueTransactionResponse;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -43,5 +47,22 @@ public class SellerDashboardController {
 
     return ApiResponse.ok(SellerRevenueResponse.from(sellerDashboardQueryUseCase.getRevenue(
         SellerRevenueQueryCommand.of(storeId, startDate, endDate))));
+  }
+
+  @GetMapping("/seller/dashboard/revenue/transactions")
+  public ApiResponse<List<SellerRevenueTransactionResponse>> getRevenueTransactions(
+      @CurrentStoreId UUID storeId,
+      @Authenticated CurrentUser currentUser,
+      @RequestParam SellerRevenueTransactionType type,
+      @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+      @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+    RoleGuard.requireSeller(currentUser);
+
+    return ApiResponse.ok(sellerDashboardQueryUseCase
+        .getRevenueTransactions(
+            SellerRevenueTransactionQueryCommand.of(storeId, type, startDate, endDate))
+        .stream()
+        .map(SellerRevenueTransactionResponse::from)
+        .toList());
   }
 }

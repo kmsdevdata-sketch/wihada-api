@@ -14,4 +14,8 @@ public interface RefundPersistencePort {
   List<Refund> findAllByOrderId(UUID orderId);
 
   long sumCompletedAmount(UUID storeId, Instant startInclusive, Instant endExclusive);
+
+  long countCompleted(UUID storeId, Instant startInclusive, Instant endExclusive);
+
+  List<Refund> findCompletedByStoreId(UUID storeId, Instant startInclusive, Instant endExclusive);
 }

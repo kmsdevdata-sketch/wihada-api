@@ -101,4 +101,35 @@ public interface OrderJpaRepository
       @Param("status") PaymentAttemptStatus status,
       @Param("startInclusive") Instant startInclusive,
       @Param("endExclusive") Instant endExclusive);
+
+  @Query("""
+      select count(p)
+      from Order o, PaymentAttempt p
+      where o.paymentAttemptId = p.id
+        and o.storeId = :storeId
+        and p.status = :status
+        and p.completedAt >= :startInclusive
+        and p.completedAt < :endExclusive
+      """)
+  long countSucceededPayments(
+      @Param("storeId") UUID storeId,
+      @Param("status") PaymentAttemptStatus status,
+      @Param("startInclusive") Instant startInclusive,
+      @Param("endExclusive") Instant endExclusive);
+
+  @Query("""
+      select o
+      from Order o, PaymentAttempt p
+      where o.paymentAttemptId = p.id
+        and o.storeId = :storeId
+        and p.status = :status
+        and p.completedAt >= :startInclusive
+        and p.completedAt < :endExclusive
+      order by p.completedAt desc
+      """)
+  List<Order> findSucceededPaymentOrders(
+      @Param("storeId") UUID storeId,
+      @Param("status") PaymentAttemptStatus status,
+      @Param("startInclusive") Instant startInclusive,
+      @Param("endExclusive") Instant endExclusive);
 }
