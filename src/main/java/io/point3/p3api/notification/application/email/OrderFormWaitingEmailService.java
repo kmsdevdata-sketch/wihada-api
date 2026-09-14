@@ -30,29 +30,60 @@ public class OrderFormWaitingEmailService {
   private final Clock clock;
 
   public void send(OrderFormWaitingEmailEvent event) {
-    if (!mailProperties.ready()) {
+    String notReadyReason = notReadyReason();
+    if (notReadyReason != null) {
+      log.warn(
+          "Skip order form waiting email. reason={}, submissionId={}, inquiryId={}, sellerUserId={}",
+          notReadyReason,
+          event.submissionId(),
+          event.inquiryId(),
+          event.sellerUserId());
       return;
     }
     if (sellerEmailNotificationLogPort.existsByInquiryIdAndType(event.inquiryId(), TYPE)) {
+      log.info(
+          "Skip order form waiting email. reason=already_sent, submissionId={}, inquiryId={}, sellerUserId={}",
+          event.submissionId(),
+          event.inquiryId(),
+          event.sellerUserId());
       return;
     }
 
     User seller = userPersistencePort.findById(event.sellerUserId()).orElse(null);
     if (seller == null || isBlank(seller.getEmail())) {
-      log.warn("Skip order form waiting email. sellerUserId={}", event.sellerUserId());
+      log.warn(
+          "Skip order form waiting email. reason={}, submissionId={}, inquiryId={}, sellerUserId={}",
+          seller == null ? "seller_not_found" : "seller_email_blank",
+          event.submissionId(),
+          event.inquiryId(),
+          event.sellerUserId());
       return;
     }
 
     try {
+      log.info(
+          "Send order form waiting email. submissionId={}, inquiryId={}, sellerUserId={}, recipient={}",
+          event.submissionId(),
+          event.inquiryId(),
+          event.sellerUserId(),
+          maskEmail(seller.getEmail()));
       mailSenderPort.sendHtml(
           SendMailCommand.of(mailProperties.from(), seller.getEmail(), SUBJECT, createHtmlBody()));
       sellerEmailNotificationLogPort.save(SellerEmailNotificationLog.create(
           event.sellerUserId(), event.inquiryId(), TYPE, clock.instant()));
+      log.info(
+          "Sent order form waiting email. submissionId={}, inquiryId={}, sellerUserId={}, recipient={}",
+          event.submissionId(),
+          event.inquiryId(),
+          event.sellerUserId(),
+          maskEmail(seller.getEmail()));
     } catch (RuntimeException e) {
       log.error(
-          "Failed to send order form waiting email. sellerUserId={}, inquiryId={}",
-          event.sellerUserId(),
+          "Failed to send order form waiting email. submissionId={}, inquiryId={}, sellerUserId={}, recipient={}",
+          event.submissionId(),
           event.inquiryId(),
+          event.sellerUserId(),
+          maskEmail(seller.getEmail()),
           e);
     }
   }
@@ -114,5 +145,26 @@ public class OrderFormWaitingEmailService {
 
   private boolean isBlank(String value) {
     return value == null || value.isBlank();
+  }
+
+  private String notReadyReason() {
+    if (!mailProperties.enabled()) {
+      return "mail_disabled";
+    }
+    if (isBlank(mailProperties.from())) {
+      return "mail_from_blank";
+    }
+    if (isBlank(mailProperties.sellerInquiriesUrl())) {
+      return "seller_inquiries_url_blank";
+    }
+    return null;
+  }
+
+  private String maskEmail(String email) {
+    int atIndex = email.indexOf('@');
+    if (atIndex <= 1) {
+      return "***";
+    }
+    return email.charAt(0) + "***" + email.substring(atIndex);
   }
 }

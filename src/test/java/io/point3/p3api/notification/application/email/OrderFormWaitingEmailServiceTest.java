@@ -29,6 +29,7 @@ class OrderFormWaitingEmailServiceTest {
 
   private static final UUID SELLER_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID INQUIRY_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID SUBMISSION_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final Clock CLOCK =
       Clock.fixed(Instant.parse("2026-09-14T06:00:00Z"), ZoneOffset.UTC);
 
@@ -42,8 +43,8 @@ class OrderFormWaitingEmailServiceTest {
     OrderFormWaitingEmailService service = new OrderFormWaitingEmailService(
         properties, new FixedUserPort(seller("seller@example.com")), emailLogPort, mailSender, CLOCK);
 
-    service.send(new OrderFormWaitingEmailEvent(SELLER_ID, INQUIRY_ID));
-    service.send(new OrderFormWaitingEmailEvent(SELLER_ID, INQUIRY_ID));
+    service.send(new OrderFormWaitingEmailEvent(SELLER_ID, INQUIRY_ID, SUBMISSION_ID));
+    service.send(new OrderFormWaitingEmailEvent(SELLER_ID, INQUIRY_ID, SUBMISSION_ID));
 
     assertEquals(1, mailSender.commands.size());
     assertEquals(1, emailLogPort.keys.size());
@@ -64,7 +65,7 @@ class OrderFormWaitingEmailServiceTest {
     OrderFormWaitingEmailService service = new OrderFormWaitingEmailService(
         properties, new FixedUserPort(seller("seller@example.com")), emailLogPort, mailSender, CLOCK);
 
-    service.send(new OrderFormWaitingEmailEvent(SELLER_ID, INQUIRY_ID));
+    service.send(new OrderFormWaitingEmailEvent(SELLER_ID, INQUIRY_ID, SUBMISSION_ID));
 
     assertTrue(mailSender.commands.isEmpty());
     assertTrue(emailLogPort.keys.isEmpty());
@@ -85,7 +86,8 @@ class OrderFormWaitingEmailServiceTest {
         },
         CLOCK);
 
-    assertDoesNotThrow(() -> service.send(new OrderFormWaitingEmailEvent(SELLER_ID, INQUIRY_ID)));
+    assertDoesNotThrow(
+        () -> service.send(new OrderFormWaitingEmailEvent(SELLER_ID, INQUIRY_ID, SUBMISSION_ID)));
     assertTrue(emailLogPort.keys.isEmpty());
   }
 
