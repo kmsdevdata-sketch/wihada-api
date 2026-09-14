@@ -240,7 +240,7 @@ class OrderConfirmationServiceIntegrationTest extends IntegrationTestSupport {
   }
 
   @Test
-  @DisplayName("주문확인서 미리보기는 최신 제출 주문서의 스냅샷 가격을 합산한다")
+  @DisplayName("주문확인서 미리보기는 현재 주문서의 스냅샷 가격을 합산한다")
   void previewsSubmissionSnapshotAmount() {
     Fixture fixture = prepareFixture();
 

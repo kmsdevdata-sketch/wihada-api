@@ -53,6 +53,9 @@ public class Inquiry {
   @Column(name = "seller_purged_at")
   private Instant sellerPurgedAt;
 
+  @Column(name = "current_order_form_submission_id")
+  private UUID currentOrderFormSubmissionId;
+
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
@@ -74,7 +77,8 @@ public class Inquiry {
     this.status = InquiryStatus.WAITING;
   }
 
-  public void reopenSellerOnSubmission() {
+  public void reopenSellerOnSubmission(UUID submissionId) {
+    this.currentOrderFormSubmissionId = Objects.requireNonNull(submissionId, "submissionId");
     this.sellerDeletedAt = null;
     this.sellerPurgedAt = null;
     this.status = InquiryStatus.WAITING;
@@ -88,16 +92,49 @@ public class Inquiry {
     this.status = InquiryStatus.IN_PROGRESS;
   }
 
+  public boolean markReviewIfCurrent(UUID submissionId) {
+    if (!isCurrentSubmission(submissionId) || status != InquiryStatus.WAITING) {
+      return false;
+    }
+
+    this.status = InquiryStatus.IN_PROGRESS;
+    return true;
+  }
+
   public void markPaid() {
     this.status = InquiryStatus.PAID;
+  }
+
+  public boolean markPaidIfCurrent(UUID submissionId) {
+    if (!isCurrentSubmission(submissionId)
+        || status == InquiryStatus.PAID
+        || status == InquiryStatus.PICKED_UP) {
+      return false;
+    }
+
+    this.status = InquiryStatus.PAID;
+    return true;
   }
 
   public void markPickedUp() {
     this.status = InquiryStatus.PICKED_UP;
   }
 
+  public boolean markPickedUpIfCurrent(UUID submissionId) {
+    if (!isCurrentSubmission(submissionId) || status == InquiryStatus.PICKED_UP) {
+      return false;
+    }
+
+    this.status = InquiryStatus.PICKED_UP;
+    return true;
+  }
+
   private boolean isPaidOrPickedUp() {
     return status == InquiryStatus.PAID || status == InquiryStatus.PICKED_UP;
+  }
+
+  private boolean isCurrentSubmission(UUID submissionId) {
+    return submissionId != null && Objects.equals(currentOrderFormSubmissionId, submissionId);
   }
 
   public void markBuyerRead(Instant readAt) {

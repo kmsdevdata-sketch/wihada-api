@@ -22,6 +22,7 @@ import io.point3.p3api.order.application.refund.OrderRefundCalculationResolver;
 import io.point3.p3api.order.application.result.OrderDetailResult;
 import io.point3.p3api.order.application.result.OrderResult;
 import io.point3.p3api.order.domain.entity.Order;
+import io.point3.p3api.order.domain.entity.OrderConfirmation;
 import io.point3.p3api.order.domain.entity.OrderStatusHistory;
 import io.point3.p3api.order.domain.type.OrderStatus;
 import io.point3.p3api.payment.application.port.PaymentAttemptPersistencePort;
@@ -75,8 +76,12 @@ public class OrderStateService implements OrderStateUseCase {
     Inquiry inquiry = inquiryPersistencePort
         .findById(order.getInquiryId())
         .orElseThrow(() -> new BaseException(OrderErrorCode.ORDER_NOT_FOUND));
-    inquiry.markPickedUp();
-    inquiryListChangeEventPublisher.publishInquiryChanged(inquiry.getId());
+    OrderConfirmation confirmation = orderConfirmationPersistencePort
+        .findById(order.getConfirmationId())
+        .orElseThrow(() -> new BaseException(OrderErrorCode.ORDER_NOT_FOUND));
+    if (inquiry.markPickedUpIfCurrent(confirmation.getOrderFormSubmissionId())) {
+      inquiryListChangeEventPublisher.publishInquiryChanged(inquiry.getId());
+    }
 
     return toResult(order);
   }

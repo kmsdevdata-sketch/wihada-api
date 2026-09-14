@@ -1,6 +1,7 @@
 package io.point3.p3api.inquiry.application.submission.view;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -88,25 +89,45 @@ class SellerOrderFormSubmissionViewServiceIntegrationTest extends IntegrationTes
         fixture.inquiry().getId(), first.getId(), fixture.store().id());
 
     assertTrue(result.sellerViewed());
+    assertFalse(result.current());
     assertNotNull(refreshedSubmission(first).getSellerViewedAt());
     assertNull(refreshedSubmission(second).getSellerViewedAt());
+    assertEquals(InquiryStatus.WAITING, refreshedInquiry(fixture).getStatus());
+    assertEquals(second.getId(), refreshedInquiry(fixture).getCurrentOrderFormSubmissionId());
+  }
+
+  @Test
+  @DisplayName("현재 주문서를 확인하면 문의 상태를 상담중으로 전환한다")
+  void marksCurrentSubmissionViewedAndInProgress() {
+    Fixture fixture = prepareFixture("current-read");
+    OrderFormSubmission first = saveSubmission(fixture, "초코 케이크 A");
+    OrderFormSubmission second = saveSubmission(fixture, "초코 케이크 B");
+
+    OrderFormSubmissionResult result = viewService.markViewed(
+        fixture.inquiry().getId(), second.getId(), fixture.store().id());
+
+    assertTrue(result.sellerViewed());
+    assertTrue(result.current());
+    assertNull(refreshedSubmission(first).getSellerViewedAt());
+    assertNotNull(refreshedSubmission(second).getSellerViewedAt());
     assertEquals(InquiryStatus.IN_PROGRESS, refreshedInquiry(fixture).getStatus());
   }
 
   @Test
-  @DisplayName("새 주문서가 추가되어도 기존 주문서 확인 상태는 유지된다")
-  void keepsViewedStateAfterNewSubmission() {
-    Fixture fixture = prepareFixture("new-submission");
+  @DisplayName("새 현재 주문서가 추가되어도 기존 주문서 확인 상태는 유지된다")
+  void keepsViewedStateAfterNewCurrentSubmission() {
+    Fixture fixture = prepareFixture("new-current-submission");
     OrderFormSubmission first = saveSubmission(fixture, "초코 케이크 A");
-    OrderFormSubmission second = saveSubmission(fixture, "초코 케이크 B");
     viewService.markViewed(
         fixture.inquiry().getId(), first.getId(), fixture.store().id());
     Instant firstViewedAt = refreshedSubmission(first).getSellerViewedAt();
 
-    markInquiryWaiting(fixture);
+    assertEquals(InquiryStatus.IN_PROGRESS, refreshedInquiry(fixture).getStatus());
+    OrderFormSubmission second = saveSubmission(fixture, "초코 케이크 B");
     OrderFormSubmission third = saveSubmission(fixture, "초코 케이크 C");
 
     assertEquals(InquiryStatus.WAITING, refreshedInquiry(fixture).getStatus());
+    assertEquals(third.getId(), refreshedInquiry(fixture).getCurrentOrderFormSubmissionId());
     assertEquals(firstViewedAt, refreshedSubmission(first).getSellerViewedAt());
     assertNull(refreshedSubmission(second).getSellerViewedAt());
     assertNull(refreshedSubmission(third).getSellerViewedAt());
@@ -117,6 +138,23 @@ class SellerOrderFormSubmissionViewServiceIntegrationTest extends IntegrationTes
     assertEquals(firstViewedAt, refreshedSubmission(first).getSellerViewedAt());
     assertNull(refreshedSubmission(second).getSellerViewedAt());
     assertNotNull(refreshedSubmission(third).getSellerViewedAt());
+    assertEquals(InquiryStatus.IN_PROGRESS, refreshedInquiry(fixture).getStatus());
+  }
+
+  @Test
+  @DisplayName("이미 확인한 현재 주문서가 접수대기 상태와 불일치하면 확인 요청으로 복구한다")
+  void repairsWaitingCurrentSubmission() {
+    Fixture fixture = prepareFixture("repair-current");
+    OrderFormSubmission submission = saveSubmission(fixture, "초코 케이크");
+    viewService.markViewed(
+        fixture.inquiry().getId(), submission.getId(), fixture.store().id());
+    Instant firstViewedAt = refreshedSubmission(submission).getSellerViewedAt();
+    markInquiryWaiting(fixture);
+
+    viewService.markViewed(
+        fixture.inquiry().getId(), submission.getId(), fixture.store().id());
+
+    assertEquals(firstViewedAt, refreshedSubmission(submission).getSellerViewedAt());
     assertEquals(InquiryStatus.IN_PROGRESS, refreshedInquiry(fixture).getStatus());
   }
 
@@ -214,25 +252,29 @@ class SellerOrderFormSubmissionViewServiceIntegrationTest extends IntegrationTes
 
   private OrderFormSubmission saveSubmission(
       OrderFormTemplate template, Inquiry inquiry, User buyer, String menuName) {
-    return orderFormSubmissionJpaRepository.saveAndFlush(OrderFormSubmission.create(
-        inquiry.getId(),
-        template.getId(),
-        buyer.getId(),
-        LocalDate.parse("2030-08-30"),
-        LocalTime.parse("13:30"),
-        "[{\"label\":\"메뉴명\",\"value\":\"" + menuName + "\"}]",
-        "[]",
-        true));
-  }
-
-  private Inquiry refreshedInquiry(Fixture fixture) {
-    return inquiryJpaRepository.findById(fixture.inquiry().getId()).orElseThrow();
+    OrderFormSubmission saved =
+        orderFormSubmissionJpaRepository.saveAndFlush(OrderFormSubmission.create(
+            inquiry.getId(),
+            template.getId(),
+            buyer.getId(),
+            LocalDate.parse("2030-08-30"),
+            LocalTime.parse("13:30"),
+            "[{\"label\":\"메뉴명\",\"value\":\"" + menuName + "\"}]",
+            "[]",
+            true));
+    inquiry.reopenSellerOnSubmission(saved.getId());
+    inquiryJpaRepository.saveAndFlush(inquiry);
+    return saved;
   }
 
   private void markInquiryWaiting(Fixture fixture) {
     Inquiry inquiry = refreshedInquiry(fixture);
     inquiry.markWaiting();
     inquiryJpaRepository.saveAndFlush(inquiry);
+  }
+
+  private Inquiry refreshedInquiry(Fixture fixture) {
+    return inquiryJpaRepository.findById(fixture.inquiry().getId()).orElseThrow();
   }
 
   private OrderFormSubmission refreshedSubmission(OrderFormSubmission submission) {

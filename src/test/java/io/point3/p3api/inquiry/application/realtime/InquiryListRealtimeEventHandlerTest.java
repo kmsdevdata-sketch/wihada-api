@@ -38,8 +38,14 @@ class InquiryListRealtimeEventHandlerTest {
     Instant buyerReadAt = Instant.parse("2026-09-07T00:00:00Z");
     Instant sellerReadAt = Instant.parse("2026-09-07T00:01:00Z");
     Instant latestEventAt = Instant.parse("2026-09-07T00:02:00Z");
-    Inquiry inquiry =
-        inquiry(inquiryId, buyerUserId, sellerReadAt, buyerReadAt, InquiryStatus.WAITING);
+    UUID currentSubmissionId = UUID.randomUUID();
+    Inquiry inquiry = inquiry(
+        inquiryId,
+        buyerUserId,
+        sellerReadAt,
+        buyerReadAt,
+        InquiryStatus.WAITING,
+        currentSubmissionId);
     Store store = store(sellerUserId);
 
     when(inquiryPersistencePort.findById(inquiryId)).thenReturn(java.util.Optional.of(inquiry));
@@ -60,6 +66,8 @@ class InquiryListRealtimeEventHandlerTest {
     assertEquals(2, buyerPayload.unreadCount());
     assertEquals(latestEventAt, buyerPayload.latestEventAt());
     assertEquals(InquiryStatus.WAITING, buyerPayload.status());
+    assertEquals(currentSubmissionId, buyerPayload.currentOrderFormSubmissionId());
+    assertEquals(currentSubmissionId, sellerPayload.currentOrderFormSubmissionId());
     assertEquals(0, sellerPayload.unreadCount());
   }
 
@@ -75,7 +83,8 @@ class InquiryListRealtimeEventHandlerTest {
         buyerUserId,
         Instant.parse("2026-09-07T00:01:00Z"),
         buyerReadAt,
-        InquiryStatus.WAITING);
+        InquiryStatus.WAITING,
+        null);
 
     when(inquiryPersistencePort.findById(inquiryId)).thenReturn(java.util.Optional.of(inquiry));
     when(chatTimelineItemPort.findLatestCreatedAt(inquiryId)).thenReturn(latestEventAt);
@@ -111,7 +120,8 @@ class InquiryListRealtimeEventHandlerTest {
       UUID buyerUserId,
       Instant sellerReadAt,
       Instant buyerReadAt,
-      InquiryStatus status) {
+      InquiryStatus status,
+      UUID currentSubmissionId) {
     Inquiry inquiry = mock(Inquiry.class);
     when(inquiry.getId()).thenReturn(inquiryId);
     when(inquiry.getStoreId()).thenReturn(UUID.randomUUID());
@@ -122,6 +132,7 @@ class InquiryListRealtimeEventHandlerTest {
     when(inquiry.isSellerVisible()).thenReturn(true);
     when(inquiry.statusForBuyer()).thenReturn(status);
     when(inquiry.statusForSeller()).thenReturn(status);
+    when(inquiry.getCurrentOrderFormSubmissionId()).thenReturn(currentSubmissionId);
     when(inquiry.getCreatedAt()).thenReturn(Instant.parse("2026-09-06T00:00:00Z"));
     return inquiry;
   }

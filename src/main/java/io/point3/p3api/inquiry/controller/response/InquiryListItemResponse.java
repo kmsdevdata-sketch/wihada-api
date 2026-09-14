@@ -17,6 +17,7 @@ public record InquiryListItemResponse(
     Instant latestEventAt,
     LatestEventResponse latestEvent,
     LatestOrderFormSubmissionResponse latestOrderFormSubmission,
+    UUID currentOrderFormSubmissionId,
     Instant myLastReadAt,
     Instant createdAt) {
 
@@ -33,6 +34,7 @@ public record InquiryListItemResponse(
         item.latestEventAt(),
         LatestEventResponse.from(item.latestEvent()),
         LatestOrderFormSubmissionResponse.from(item.latestOrderFormSubmission()),
+        detail.currentOrderFormSubmissionId(),
         detail.myLastReadAt(),
         detail.createdAt());
   }

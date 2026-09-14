@@ -30,7 +30,7 @@ public class SellerOrderFormSubmissionQueryService
   public List<OrderFormSubmissionResult> getSubmissions(UUID inquiryId, UUID storeId) {
     Inquiry inquiry = inquiryChatAccessService.getSellerInquiry(inquiryId, storeId);
     return orderFormSubmissionPersistencePort.findAllByInquiryId(inquiry.getId()).stream()
-        .map(this::toResult)
+        .map(submission -> toResult(submission, inquiry.getCurrentOrderFormSubmissionId()))
         .toList();
   }
 
@@ -43,7 +43,7 @@ public class SellerOrderFormSubmissionQueryService
         .orElseThrow(() -> new BaseException(OrderFormErrorCode.ORDER_FORM_NOT_FOUND));
 
     validate(submission, inquiry);
-    return toResult(submission);
+    return toResult(submission, inquiry.getCurrentOrderFormSubmissionId());
   }
 
   private static void validate(OrderFormSubmission submission, Inquiry inquiry) {
@@ -52,12 +52,14 @@ public class SellerOrderFormSubmissionQueryService
     }
   }
 
-  private OrderFormSubmissionResult toResult(OrderFormSubmission submission) {
+  private OrderFormSubmissionResult toResult(
+      OrderFormSubmission submission, UUID currentOrderFormSubmissionId) {
     String answers = orderFormAnswerDeliveryService.appendImageDeliveries(submission.getAnswers());
     return OrderFormSubmissionResult.from(
         submission,
         answers,
         orderFormReferenceAssetDeliveryService.appendDeliveries(submission.getReferenceAssets()),
-        orderOptionRowResolver.fromSubmissionAnswers(answers));
+        orderOptionRowResolver.fromSubmissionAnswers(answers),
+        currentOrderFormSubmissionId);
   }
 }

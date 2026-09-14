@@ -20,6 +20,7 @@ public record OrderFormSubmissionResponse(
     boolean cancellationRefundAgreed,
     Instant sellerViewedAt,
     boolean sellerViewed,
+    boolean current,
     Instant submittedAt) {
 
   public OrderFormSubmissionResponse {
@@ -41,6 +42,7 @@ public record OrderFormSubmissionResponse(
         submission.cancellationRefundAgreed(),
         submission.sellerViewedAt(),
         submission.sellerViewed(),
+        submission.current(),
         submission.submittedAt());
   }
 

@@ -42,13 +42,13 @@ public class SellerOrderFormSubmissionViewService implements SellerOrderFormSubm
 
     Instant previousViewedAt = submission.getSellerViewedAt();
     submission.markSellerViewed(Instant.now(clock));
+    boolean inquiryStatusChanged = inquiry.markReviewIfCurrent(submission.getId());
 
-    if (previousViewedAt == null) {
-      inquiry.markInProgressOnSellerReview();
+    if (previousViewedAt == null || inquiryStatusChanged) {
       inquiryListChangeEventPublisher.publishInquiryChanged(inquiry.getId());
     }
 
-    return toResult(submission);
+    return toResult(submission, inquiry.getCurrentOrderFormSubmissionId());
   }
 
   private static void validate(OrderFormSubmission submission, Inquiry inquiry) {
@@ -57,12 +57,14 @@ public class SellerOrderFormSubmissionViewService implements SellerOrderFormSubm
     }
   }
 
-  private OrderFormSubmissionResult toResult(OrderFormSubmission submission) {
+  private OrderFormSubmissionResult toResult(
+      OrderFormSubmission submission, UUID currentOrderFormSubmissionId) {
     String answers = orderFormAnswerDeliveryService.appendImageDeliveries(submission.getAnswers());
     return OrderFormSubmissionResult.from(
         submission,
         answers,
         orderFormReferenceAssetDeliveryService.appendDeliveries(submission.getReferenceAssets()),
-        orderOptionRowResolver.fromSubmissionAnswers(answers));
+        orderOptionRowResolver.fromSubmissionAnswers(answers),
+        currentOrderFormSubmissionId);
   }
 }

@@ -4,6 +4,7 @@ import io.point3.p3api.exception.BaseException;
 import io.point3.p3api.exception.code.OrderConfirmationErrorCode;
 import io.point3.p3api.inquiry.application.chat.InquiryChatAccessService;
 import io.point3.p3api.inquiry.application.port.OrderFormSubmissionPersistencePort;
+import io.point3.p3api.inquiry.domain.entity.Inquiry;
 import io.point3.p3api.inquiry.domain.entity.OrderFormSubmission;
 import io.point3.p3api.order.application.price.OrderConfirmationPriceCalculator;
 import io.point3.p3api.orderform.application.query.OrderFormQueryUseCase;
@@ -32,8 +33,8 @@ public class OrderConfirmationPreviewQueryService {
 
   public OrderConfirmationPreview getPreview(
       UUID inquiryId, UUID storeId, UUID orderFormSubmissionId) {
-    inquiryChatAccessService.getSellerInquiry(inquiryId, storeId);
-    OrderFormSubmission submission = findSubmission(inquiryId, orderFormSubmissionId);
+    Inquiry inquiry = inquiryChatAccessService.getSellerInquiry(inquiryId, storeId);
+    OrderFormSubmission submission = findSubmission(inquiry, orderFormSubmissionId);
     validateSellerViewed(submission);
 
     var pricePreview = priceCalculator.preview(submission.getAnswers());
@@ -54,10 +55,10 @@ public class OrderConfirmationPreviewQueryService {
         pricePreview.unconfirmedOptions());
   }
 
-  private OrderFormSubmission findSubmission(UUID inquiryId, UUID orderFormSubmissionId) {
+  private OrderFormSubmission findSubmission(Inquiry inquiry, UUID orderFormSubmissionId) {
     if (orderFormSubmissionId == null) {
-      return submissionPersistencePort.findAllByInquiryId(inquiryId).stream()
-          .findFirst()
+      return java.util.Optional.ofNullable(inquiry.getCurrentOrderFormSubmissionId())
+          .flatMap(submissionPersistencePort::findById)
           .orElseThrow(() ->
               new BaseException(OrderConfirmationErrorCode.ORDER_CONFIRMATION_SUBMISSION_INVALID));
     }
@@ -67,7 +68,7 @@ public class OrderConfirmationPreviewQueryService {
         .orElseThrow(() ->
             new BaseException(OrderConfirmationErrorCode.ORDER_CONFIRMATION_SUBMISSION_INVALID));
 
-    if (!submission.getInquiryId().equals(inquiryId)) {
+    if (!submission.getInquiryId().equals(inquiry.getId())) {
       throw new BaseException(OrderConfirmationErrorCode.ORDER_CONFIRMATION_SUBMISSION_INVALID);
     }
 

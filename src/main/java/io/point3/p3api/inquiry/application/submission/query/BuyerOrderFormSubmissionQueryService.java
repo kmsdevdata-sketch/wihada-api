@@ -33,7 +33,7 @@ public class BuyerOrderFormSubmissionQueryService implements BuyerOrderFormSubmi
         .orElseThrow(() -> new BaseException(OrderFormErrorCode.ORDER_FORM_NOT_FOUND));
 
     validate(submission, inquiry, buyerUserId);
-    return toResult(submission);
+    return toResult(submission, inquiry.getCurrentOrderFormSubmissionId());
   }
 
   private static void validate(OrderFormSubmission submission, Inquiry inquiry, UUID buyerUserId) {
@@ -43,12 +43,14 @@ public class BuyerOrderFormSubmissionQueryService implements BuyerOrderFormSubmi
     }
   }
 
-  private OrderFormSubmissionResult toResult(OrderFormSubmission submission) {
+  private OrderFormSubmissionResult toResult(
+      OrderFormSubmission submission, UUID currentOrderFormSubmissionId) {
     String answers = orderFormAnswerDeliveryService.appendImageDeliveries(submission.getAnswers());
     return OrderFormSubmissionResult.from(
         submission,
         answers,
         orderFormReferenceAssetDeliveryService.appendDeliveries(submission.getReferenceAssets()),
-        orderOptionRowResolver.fromSubmissionAnswers(answers));
+        orderOptionRowResolver.fromSubmissionAnswers(answers),
+        currentOrderFormSubmissionId);
   }
 }

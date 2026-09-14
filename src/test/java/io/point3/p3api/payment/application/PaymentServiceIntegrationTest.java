@@ -26,6 +26,7 @@ import io.point3.p3api.inquiry.domain.entity.Inquiry;
 import io.point3.p3api.inquiry.domain.entity.OrderFormSubmission;
 import io.point3.p3api.inquiry.domain.type.InquiryStatus;
 import io.point3.p3api.inquiry.domain.type.OrderFormReferenceAssetSource;
+import io.point3.p3api.inquiry.infrastructure.persistence.InquiryJpaRepository;
 import io.point3.p3api.notification.domain.type.NotificationType;
 import io.point3.p3api.notification.infrastructure.persistence.NotificationJpaRepository;
 import io.point3.p3api.order.application.OrderConfirmationService;
@@ -148,6 +149,9 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
 
   @Autowired
   private UserJpaRepository userJpaRepository;
+
+  @Autowired
+  private InquiryJpaRepository inquiryJpaRepository;
 
   @Autowired
   private PaymentAttemptJpaRepository paymentAttemptJpaRepository;
@@ -462,7 +466,34 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
             .filter(item -> item.getSenderUserId().equals(fixture.buyer().getId()))
             .count());
     assertEquals(OrderConfirmationStatus.PAID, paidConfirmation.getStatus());
-    assertEquals(InquiryStatus.PAID, fixture.inquiry().getStatus());
+    assertEquals(InquiryStatus.PAID, refreshedInquiry(fixture).getStatus());
+  }
+
+  @Test
+  @DisplayName("이전 주문서의 결제가 늦게 완료되어도 현재 문의 상태를 오염시키지 않는다")
+  void doesNotUpdateInquiryStatusForOldSubmissionPayment() {
+    Fixture fixture = prepareFixture("payment-old-submission");
+    SendOrderConfirmationResult confirmation = sendConfirmation(fixture);
+    orderConfirmationStateService.markBuyerViewed(
+        fixture.inquiry().getId(),
+        confirmation.orderConfirmation().id(),
+        fixture.buyer().getId());
+    PaymentPreparationResult prepared = paymentPrepareUseCase.prepare(PreparePaymentCommand.of(
+        fixture.inquiry().getId(),
+        confirmation.orderConfirmation().id(),
+        fixture.buyer().getId()));
+    OrderFormSubmission currentSubmission = submitOrderForm(
+        fixture.store().id(), fixture.buyer().getId(), fixture.inquiry(), fixture.form());
+    point3PaymentPort.nextCaptureStatus(Point3CaptureResult.Status.CAPTURED);
+
+    PaymentCaptureResult captured = paymentCaptureUseCase.capture(CapturePaymentCommand.of(
+        prepared.paymentAttemptId(), fixture.buyer().getId(), prepared.sessionId(), "payer-new"));
+    Inquiry inquiry = refreshedInquiry(fixture);
+
+    assertEquals(PaymentAttemptStatus.SUCCEEDED, captured.status());
+    assertNotNull(captured.orderId());
+    assertEquals(InquiryStatus.WAITING, inquiry.getStatus());
+    assertEquals(currentSubmission.getId(), inquiry.getCurrentOrderFormSubmissionId());
   }
 
   @Test
@@ -728,6 +759,10 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
         role,
         "010-0000-0000",
         SignupProvider.GOOGLE));
+  }
+
+  private Inquiry refreshedInquiry(Fixture fixture) {
+    return inquiryJpaRepository.findById(fixture.inquiry().getId()).orElseThrow();
   }
 
   private Asset saveAsset(UUID uploadedBy, String filename) {

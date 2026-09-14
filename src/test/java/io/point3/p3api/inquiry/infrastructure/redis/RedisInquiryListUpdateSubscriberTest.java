@@ -65,6 +65,10 @@ class RedisInquiryListUpdateSubscriberTest {
     return new InquiryListRedisEvent(
         UUID.randomUUID(),
         InquiryListRealtimePayload.inquiryUpdated(
-            UUID.randomUUID(), 1, Instant.parse("2026-09-07T00:00:00Z"), InquiryStatus.WAITING));
+            UUID.randomUUID(),
+            1,
+            Instant.parse("2026-09-07T00:00:00Z"),
+            InquiryStatus.WAITING,
+            UUID.randomUUID()));
   }
 }

@@ -60,9 +60,6 @@ public class OrderFormDraftConsumeService implements OrderFormDraftConsumeUseCas
     OrderFormSubmission submission = orderFormSubmissionCreateUseCase.create(
         toCreateSubmissionCommand(draft, command.buyerUserId(), inquiry.getId()));
 
-    // 주문서 제출까지 성공한 후 판매자 상담을 접수대기 상태로 복구
-    inquiry.reopenSellerOnSubmission();
-
     // 타임라인 아이템 발행
     timelineItemPublisher.publishOrderFormSubmission(
         inquiry.getId(), command.buyerUserId(), submission.getId());
