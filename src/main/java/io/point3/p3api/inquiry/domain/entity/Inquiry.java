@@ -74,6 +74,12 @@ public class Inquiry {
     this.status = InquiryStatus.WAITING;
   }
 
+  public void reopenSellerOnSubmission() {
+    this.sellerDeletedAt = null;
+    this.sellerPurgedAt = null;
+    this.status = InquiryStatus.WAITING;
+  }
+
   public void markInProgressOnSellerReview() {
     if (isPaidOrPickedUp()) {
       return;

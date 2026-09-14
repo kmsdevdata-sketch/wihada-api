@@ -3,7 +3,9 @@ package io.point3.p3api.application;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -48,6 +50,7 @@ import io.point3.p3api.inquiry.domain.entity.Inquiry;
 import io.point3.p3api.inquiry.domain.entity.OrderFormSubmission;
 import io.point3.p3api.inquiry.domain.type.InquiryStatus;
 import io.point3.p3api.inquiry.domain.type.OrderFormReferenceAssetSource;
+import io.point3.p3api.inquiry.infrastructure.persistence.InquiryJpaRepository;
 import io.point3.p3api.notification.application.NotificationService;
 import io.point3.p3api.notification.application.result.NotificationResult;
 import io.point3.p3api.notification.domain.entity.Notification;
@@ -99,6 +102,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @TestPropertySource(properties = "p3.asset.delivery.base-url=https://assets.example.test")
 class CoreApplicationWorkflowIntegrationTest extends IntegrationTestSupport {
@@ -171,6 +175,9 @@ class CoreApplicationWorkflowIntegrationTest extends IntegrationTestSupport {
 
   @Autowired
   private ChatTimelineItemJpaRepository chatTimelineItemJpaRepository;
+
+  @Autowired
+  private InquiryJpaRepository inquiryJpaRepository;
 
   @Autowired
   private NotificationJpaRepository notificationJpaRepository;
@@ -335,6 +342,49 @@ class CoreApplicationWorkflowIntegrationTest extends IntegrationTestSupport {
             .stream()
             .filter(notification -> notification.getType() == NotificationType.ORDER_FORM_UPDATED)
             .count());
+  }
+
+  @Test
+  @DisplayName("판매자 휴지통 상담은 첫 주문서 제출 시 접수대기로 자동 복구된다")
+  void consumesDraftAndReopensSellerTrashInquiry() {
+    Fixture fixture = prepareFixtureWithoutInquiry("workflow-draft-trash-reopen");
+    UUID galleryAssetId =
+        createVisibleGalleryAsset(fixture.store().id(), fixture.seller().getId());
+    Inquiry inquiry = inquiryOpenService.open(
+        OpenInquiryCommand.of(fixture.store().id(), fixture.buyer().getId()));
+    inquiry.markInProgressOnSellerReview();
+    inquiryListService.moveSellerToTrash(inquiry.getId(), fixture.store().id());
+
+    OrderFormDraftResult draft = createDraft(
+        fixture,
+        "바닐라 케이크",
+        new CreateOrderFormDraftCommand.ReferenceAsset(
+            galleryAssetId, OrderFormReferenceAssetSource.STORE_GALLERY),
+        true);
+    OrderFormDraftConsumeResult consumed = orderFormDraftConsumeService.consume(
+        new ConsumeOrderFormDraftCommand(draft.draftKey(), fixture.buyer().getId()));
+
+    assertSellerWaitingListTarget(consumed.inquiry(), fixture);
+  }
+
+  @Test
+  @DisplayName("자동 비우기된 판매자 휴지통 상담도 주문서 수정 재제출 시 접수대기로 자동 복구된다")
+  void consumesUpdateDraftAndReopensSellerPurgedInquiry() {
+    Fixture fixture = prepareFixtureWithoutInquiry("workflow-draft-purge-reopen");
+    OrderFormDraftResult firstDraft = createDraft(fixture, "바닐라 케이크", null, false);
+    OrderFormDraftConsumeResult firstConsumed = orderFormDraftConsumeService.consume(
+        new ConsumeOrderFormDraftCommand(firstDraft.draftKey(), fixture.buyer().getId()));
+    inquiryListService.moveSellerToTrash(firstConsumed.inquiry().getId(), fixture.store().id());
+    ReflectionTestUtils.setField(
+        firstConsumed.inquiry(), "sellerPurgedAt", Instant.parse("2026-09-25T00:00:00Z"));
+    inquiryJpaRepository.saveAndFlush(firstConsumed.inquiry());
+
+    OrderFormDraftResult updateDraft = createDraft(fixture, "초코 케이크", null, false);
+    OrderFormDraftConsumeResult updated = orderFormDraftConsumeService.consume(
+        new ConsumeOrderFormDraftCommand(updateDraft.draftKey(), fixture.buyer().getId()));
+
+    assertEquals(firstConsumed.inquiry().getId(), updated.inquiry().getId());
+    assertSellerWaitingListTarget(updated.inquiry(), fixture);
   }
 
   @Test
@@ -507,6 +557,23 @@ class CoreApplicationWorkflowIntegrationTest extends IntegrationTestSupport {
         .filter(item -> item.type() == type)
         .findFirst()
         .orElseThrow();
+  }
+
+  private void assertSellerWaitingListTarget(Inquiry inquiry, Fixture fixture) {
+    assertNull(inquiry.getSellerDeletedAt());
+    assertNull(inquiry.getSellerPurgedAt());
+    assertEquals(InquiryStatus.WAITING, inquiry.getStatus());
+    assertEquals(InquiryStatus.WAITING, inquiry.statusForSeller());
+    assertTrue(inquiry.isSellerVisible());
+    assertFalse(inquiry.isSellerTrashed());
+    assertTrue(inquiryListService
+        .getSellerInquiries(fixture.store().id(), fixture.seller().getId(), InquiryStatus.WAITING)
+        .stream()
+        .anyMatch(item -> item.inquiryId().equals(inquiry.getId())));
+    assertFalse(inquiryListService
+        .getSellerInquiries(fixture.store().id(), fixture.seller().getId(), InquiryStatus.TRASH)
+        .stream()
+        .anyMatch(item -> item.inquiryId().equals(inquiry.getId())));
   }
 
   private Fixture prepareFixture(String prefix) {
