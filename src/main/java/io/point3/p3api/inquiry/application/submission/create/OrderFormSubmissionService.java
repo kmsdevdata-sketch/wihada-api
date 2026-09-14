@@ -13,6 +13,7 @@ import io.point3.p3api.inquiry.application.submission.validation.OrderFormRefere
 import io.point3.p3api.inquiry.domain.entity.OrderFormSubmission;
 import io.point3.p3api.notification.application.create.CreateNotificationCommand;
 import io.point3.p3api.notification.application.create.NotificationCreateUseCase;
+import io.point3.p3api.notification.application.email.OrderFormWaitingEmailEvent;
 import io.point3.p3api.notification.domain.type.NotificationReferenceType;
 import io.point3.p3api.notification.domain.type.NotificationType;
 import io.point3.p3api.order.application.port.OrderConfirmationPersistencePort;
@@ -21,7 +22,9 @@ import io.point3.p3api.orderform.application.query.OrderFormQueryUseCase;
 import io.point3.p3api.orderform.application.result.OrderFormResult;
 import io.point3.p3api.store.application.port.StorePersistencePort;
 import io.point3.p3api.store.domain.entity.Store;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 /** 주문서 제출 검증/스냅샷/저장 담당 */
@@ -40,6 +43,7 @@ public class OrderFormSubmissionService implements OrderFormSubmissionCreateUseC
   private final OrderFormReferenceSnapshotFactory referenceSnapshotFactory;
   private final StorePersistencePort storePersistencePort;
   private final NotificationCreateUseCase notificationCreateUseCase;
+  private final ApplicationEventPublisher applicationEventPublisher;
 
   @Override
   public OrderFormSubmission create(CreateOrderFormSubmissionCommand command) {
@@ -73,14 +77,21 @@ public class OrderFormSubmissionService implements OrderFormSubmissionCreateUseC
     orderConfirmationPersistencePort
         .findLatestByInquiryIdAndStatus(command.inquiryId(), OrderConfirmationStatus.SENT)
         .ifPresent(confirmation -> confirmation.replace());
-    notifySeller(command, command.update());
+    Store store = findStore(command.storeId());
+    notifySeller(command, command.update(), store);
+    applicationEventPublisher.publishEvent(
+        new OrderFormWaitingEmailEvent(store.getOwnerUserId(), command.inquiryId()));
     return savedSubmission;
   }
 
-  private void notifySeller(CreateOrderFormSubmissionCommand command, boolean isUpdate) {
-    Store store = storePersistencePort
-        .findById(command.storeId())
+  private Store findStore(UUID storeId) {
+    return storePersistencePort
+        .findById(storeId)
         .orElseThrow(() -> new BaseException(OrderFormErrorCode.ORDER_FORM_NOT_FOUND));
+  }
+
+  private void notifySeller(
+      CreateOrderFormSubmissionCommand command, boolean isUpdate, Store store) {
     notificationCreateUseCase.create(new CreateNotificationCommand(
         store.getOwnerUserId(),
         isUpdate ? NotificationType.ORDER_FORM_UPDATED : NotificationType.ORDER_FORM_SUBMITTED,

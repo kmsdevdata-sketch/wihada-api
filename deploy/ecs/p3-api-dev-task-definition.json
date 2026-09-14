@@ -92,6 +92,14 @@
         {
           "name": "P3_KFTC_VERIFICATION_ENABLED",
           "value": "false"
+        },
+        {
+          "name": "P3_MAIL_ENABLED",
+          "value": "true"
+        },
+        {
+          "name": "P3_SELLER_INQUIRIES_URL",
+          "value": "https://seller.wihada.com/seller/home?tab=waiting"
         }
       ],
       "secrets": [
@@ -130,6 +138,18 @@
         {
           "name": "P3_KFTC_USE_ORG_CODE",
           "valueFrom": "arn:aws:ssm:ap-northeast-2:851563824752:parameter/p3/dev/api/P3_KFTC_USE_ORG_CODE"
+        },
+        {
+          "name": "GMAIL_USERNAME",
+          "valueFrom": "arn:aws:ssm:ap-northeast-2:851563824752:parameter/p3/dev/api/GMAIL_USERNAME"
+        },
+        {
+          "name": "GMAIL_APP_PASSWORD",
+          "valueFrom": "arn:aws:ssm:ap-northeast-2:851563824752:parameter/p3/dev/api/GMAIL_APP_PASSWORD"
+        },
+        {
+          "name": "MAIL_FROM",
+          "valueFrom": "arn:aws:ssm:ap-northeast-2:851563824752:parameter/p3/dev/api/MAIL_FROM"
         }
       ],
       "logConfiguration": {
