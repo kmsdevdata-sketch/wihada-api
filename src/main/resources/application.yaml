@@ -19,6 +19,18 @@ spring:
       ssl:
         enabled: ${REDIS_SSL:false}
 
+  mail:
+    host: ${GMAIL_SMTP_HOST:smtp.gmail.com}
+    port: ${GMAIL_SMTP_PORT:587}
+    username: ${GMAIL_USERNAME:}
+    password: ${GMAIL_APP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
   cloud:
     aws:
       region:
@@ -60,6 +72,11 @@ p3:
 
   web:
     base-url: ${P3_WEB_BASE_URL:http://localhost:3000}
+
+  mail:
+    enabled: ${P3_MAIL_ENABLED:false}
+    from: ${MAIL_FROM:}
+    seller-inquiries-url: ${P3_SELLER_INQUIRIES_URL:https://seller.wihada.com/seller/home?tab=waiting}
 
   internal:
     auth:
