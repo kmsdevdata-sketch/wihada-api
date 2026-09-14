@@ -13,6 +13,7 @@ public record SellerInquiryChatDetailResponse(
     String storeSlug,
     ParticipantResponse participant,
     StartReferenceAssetResponse startReferenceAsset,
+    UUID currentOrderFormSubmissionId,
     Instant myLastReadAt,
     Instant participantLastReadAt,
     Instant createdAt) {
@@ -25,6 +26,7 @@ public record SellerInquiryChatDetailResponse(
         detail.storeSlug(),
         ParticipantResponse.from(detail.participant()),
         StartReferenceAssetResponse.from(detail.startReferenceAsset()),
+        detail.currentOrderFormSubmissionId(),
         detail.myLastReadAt(),
         detail.participantLastReadAt(),
         detail.createdAt());

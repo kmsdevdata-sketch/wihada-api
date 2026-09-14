@@ -374,7 +374,8 @@ class CoreApplicationWorkflowIntegrationTest extends IntegrationTestSupport {
     OrderFormDraftResult firstDraft = createDraft(fixture, "바닐라 케이크", null, false);
     OrderFormDraftConsumeResult firstConsumed = orderFormDraftConsumeService.consume(
         new ConsumeOrderFormDraftCommand(firstDraft.draftKey(), fixture.buyer().getId()));
-    inquiryListService.moveSellerToTrash(firstConsumed.inquiry().getId(), fixture.store().id());
+    inquiryListService.moveSellerToTrash(
+        firstConsumed.inquiry().getId(), fixture.store().id());
     ReflectionTestUtils.setField(
         firstConsumed.inquiry(), "sellerPurgedAt", Instant.parse("2026-09-25T00:00:00Z"));
     inquiryJpaRepository.saveAndFlush(firstConsumed.inquiry());

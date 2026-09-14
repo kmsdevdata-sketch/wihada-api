@@ -3,6 +3,7 @@ package io.point3.p3api.inquiry.application.submission.create;
 import io.point3.p3api.exception.BaseException;
 import io.point3.p3api.exception.code.OrderFormErrorCode;
 import io.point3.p3api.inquiry.application.command.CreateOrderFormSubmissionCommand;
+import io.point3.p3api.inquiry.application.port.InquiryPersistencePort;
 import io.point3.p3api.inquiry.application.port.OrderFormSubmissionPersistencePort;
 import io.point3.p3api.inquiry.application.submission.snapshot.OrderFormAnswerSnapshotFactory;
 import io.point3.p3api.inquiry.application.submission.snapshot.OrderFormReferenceSnapshotFactory;
@@ -10,6 +11,7 @@ import io.point3.p3api.inquiry.application.submission.validation.OrderFormAnswer
 import io.point3.p3api.inquiry.application.submission.validation.OrderFormImageAssetValidator;
 import io.point3.p3api.inquiry.application.submission.validation.OrderFormPickupValidator;
 import io.point3.p3api.inquiry.application.submission.validation.OrderFormReferenceAssetValidator;
+import io.point3.p3api.inquiry.domain.entity.Inquiry;
 import io.point3.p3api.inquiry.domain.entity.OrderFormSubmission;
 import io.point3.p3api.notification.application.create.CreateNotificationCommand;
 import io.point3.p3api.notification.application.create.NotificationCreateUseCase;
@@ -27,6 +29,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 /** 주문서 제출 검증/스냅샷/저장 담당 */
 @Slf4j
@@ -40,6 +43,7 @@ public class OrderFormSubmissionService implements OrderFormSubmissionCreateUseC
   private final OrderFormReferenceAssetValidator orderFormReferenceAssetValidator;
   private final OrderFormPickupValidator orderFormPickupValidator;
   private final OrderFormImageAssetValidator orderFormImageAssetValidator;
+  private final InquiryPersistencePort inquiryPersistencePort;
   private final OrderConfirmationPersistencePort orderConfirmationPersistencePort;
   private final OrderFormAnswerSnapshotFactory snapshotFactory;
   private final OrderFormReferenceSnapshotFactory referenceSnapshotFactory;
@@ -48,6 +52,7 @@ public class OrderFormSubmissionService implements OrderFormSubmissionCreateUseC
   private final ApplicationEventPublisher applicationEventPublisher;
 
   @Override
+  @Transactional
   public OrderFormSubmission create(CreateOrderFormSubmissionCommand command) {
     OrderFormResult activeForm = orderFormQueryUseCase.getActiveTemplate(command.storeId());
 
@@ -76,6 +81,8 @@ public class OrderFormSubmissionService implements OrderFormSubmissionCreateUseC
         command.cancellationRefundAgreement().agreed());
 
     OrderFormSubmission savedSubmission = submissionPersistencePort.save(submission);
+    Inquiry inquiry = findInquiry(command);
+    inquiry.reopenSellerOnSubmission(savedSubmission.getId());
     orderConfirmationPersistencePort
         .findLatestByInquiryIdAndStatus(command.inquiryId(), OrderConfirmationStatus.SENT)
         .ifPresent(confirmation -> confirmation.replace());
@@ -90,6 +97,17 @@ public class OrderFormSubmissionService implements OrderFormSubmissionCreateUseC
     applicationEventPublisher.publishEvent(new OrderFormWaitingEmailEvent(
         store.getOwnerUserId(), command.inquiryId(), savedSubmission.getId()));
     return savedSubmission;
+  }
+
+  private Inquiry findInquiry(CreateOrderFormSubmissionCommand command) {
+    Inquiry inquiry = inquiryPersistencePort
+        .findById(command.inquiryId())
+        .orElseThrow(() -> new BaseException(OrderFormErrorCode.ORDER_FORM_NOT_FOUND));
+    if (!inquiry.getStoreId().equals(command.storeId())
+        || !inquiry.getBuyerUserId().equals(command.buyerUserId())) {
+      throw new BaseException(OrderFormErrorCode.ORDER_FORM_NOT_FOUND);
+    }
+    return inquiry;
   }
 
   private Store findStore(UUID storeId) {

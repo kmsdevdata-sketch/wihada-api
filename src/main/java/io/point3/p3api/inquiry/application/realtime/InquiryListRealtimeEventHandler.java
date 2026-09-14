@@ -40,7 +40,8 @@ public class InquiryListRealtimeEventHandler {
           inquiry.getBuyerUserId(),
           inquiry.getBuyerLastReadAt(),
           latestEventAt,
-          inquiry.statusForBuyer());
+          inquiry.statusForBuyer(),
+          inquiry.getCurrentOrderFormSubmissionId());
     }
     if (inquiry.isSellerVisible()) {
       publishFor(
@@ -48,7 +49,8 @@ public class InquiryListRealtimeEventHandler {
           store.getOwnerUserId(),
           inquiry.getSellerLastReadAt(),
           latestEventAt,
-          inquiry.statusForSeller());
+          inquiry.statusForSeller(),
+          inquiry.getCurrentOrderFormSubmissionId());
     }
   }
 
@@ -63,7 +65,8 @@ public class InquiryListRealtimeEventHandler {
           inquiry.getBuyerUserId(),
           inquiry.getBuyerLastReadAt(),
           latestEventAt(event.inquiryId(), inquiry.getCreatedAt()),
-          inquiry.statusForBuyer());
+          inquiry.statusForBuyer(),
+          inquiry.getCurrentOrderFormSubmissionId());
       return;
     }
 
@@ -74,7 +77,8 @@ public class InquiryListRealtimeEventHandler {
           store.getOwnerUserId(),
           inquiry.getSellerLastReadAt(),
           latestEventAt(event.inquiryId(), inquiry.getCreatedAt()),
-          inquiry.statusForSeller());
+          inquiry.statusForSeller(),
+          inquiry.getCurrentOrderFormSubmissionId());
     }
   }
 
@@ -96,13 +100,19 @@ public class InquiryListRealtimeEventHandler {
   }
 
   private void publishFor(
-      UUID inquiryId, UUID userId, Instant readAt, Instant latestEventAt, InquiryStatus status) {
+      UUID inquiryId,
+      UUID userId,
+      Instant readAt,
+      Instant latestEventAt,
+      InquiryStatus status,
+      UUID currentOrderFormSubmissionId) {
     inquiryListRealtimePublisherPort.publish(new InquiryListRealtimeEvent(
         userId,
         InquiryListRealtimePayload.inquiryUpdated(
             inquiryId,
             chatTimelineItemPort.countUnread(inquiryId, userId, readAt),
             latestEventAt,
-            status)));
+            status,
+            currentOrderFormSubmissionId)));
   }
 }

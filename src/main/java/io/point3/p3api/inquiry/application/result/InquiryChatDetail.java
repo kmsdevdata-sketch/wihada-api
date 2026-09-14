@@ -12,6 +12,7 @@ public record InquiryChatDetail(
     String storeSlug,
     Participant participant,
     OrderStartReferenceAssetResult startReferenceAsset,
+    UUID currentOrderFormSubmissionId,
     Instant myLastReadAt,
     Instant participantLastReadAt,
     Instant createdAt) {
@@ -30,6 +31,7 @@ public record InquiryChatDetail(
         store.getSlug(),
         participant,
         startReferenceAsset,
+        inquiry.getCurrentOrderFormSubmissionId(),
         myLastReadAt,
         participantLastReadAt,
         inquiry.getCreatedAt());

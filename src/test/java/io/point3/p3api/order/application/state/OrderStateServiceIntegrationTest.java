@@ -10,8 +10,10 @@ import io.point3.p3api.chat.infrastructure.persistence.ChatTimelineItemJpaReposi
 import io.point3.p3api.exception.BaseException;
 import io.point3.p3api.exception.code.OrderErrorCode;
 import io.point3.p3api.inquiry.domain.entity.Inquiry;
+import io.point3.p3api.inquiry.domain.entity.OrderFormSubmission;
 import io.point3.p3api.inquiry.domain.type.InquiryStatus;
 import io.point3.p3api.inquiry.infrastructure.persistence.InquiryJpaRepository;
+import io.point3.p3api.inquiry.infrastructure.persistence.OrderFormSubmissionJpaRepository;
 import io.point3.p3api.notification.domain.type.NotificationType;
 import io.point3.p3api.notification.infrastructure.persistence.NotificationJpaRepository;
 import io.point3.p3api.order.application.query.order.OrderQueryUseCase;
@@ -25,6 +27,8 @@ import io.point3.p3api.order.domain.type.OrderStatus;
 import io.point3.p3api.order.infrastructure.persistence.OrderConfirmationJpaRepository;
 import io.point3.p3api.order.infrastructure.persistence.OrderJpaRepository;
 import io.point3.p3api.order.infrastructure.persistence.OrderStatusHistoryJpaRepository;
+import io.point3.p3api.orderform.domain.entity.OrderFormTemplate;
+import io.point3.p3api.orderform.infrastructure.persistence.OrderFormTemplateJpaRepository;
 import io.point3.p3api.payment.application.port.Point3PaymentPort;
 import io.point3.p3api.payment.application.port.Point3PaymentException;
 import io.point3.p3api.payment.application.port.Point3RefundResult;
@@ -90,6 +94,12 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
 
   @Autowired
   private OrderConfirmationJpaRepository orderConfirmationJpaRepository;
+
+  @Autowired
+  private OrderFormTemplateJpaRepository orderFormTemplateJpaRepository;
+
+  @Autowired
+  private OrderFormSubmissionJpaRepository orderFormSubmissionJpaRepository;
 
   @Autowired
   private PaymentAttemptJpaRepository paymentAttemptJpaRepository;
@@ -802,6 +812,26 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
   }
 
   @Test
+  @DisplayName("이전 주문 픽업완료는 현재 문의 상태를 오염시키지 않는다")
+  void doesNotUpdateInquiryStatusForOldSubmissionPickup() {
+    Fixture fixture = prepareFixture("order-old-pickup");
+    OrderFormSubmission currentSubmission =
+        createSubmission(fixture.store(), fixture.buyer(), fixture.inquiry(), 8);
+    Inquiry waitingInquiry =
+        inquiryJpaRepository.findById(fixture.inquiry().getId()).orElseThrow();
+    waitingInquiry.reopenSellerOnSubmission(currentSubmission.getId());
+    inquiryJpaRepository.saveAndFlush(waitingInquiry);
+
+    OrderResult pickedUp = orderStateUseCase.pickUp(
+        CompleteOrderPickupCommand.of(fixture.order().getId(), fixture.store().getId()));
+    Inquiry inquiry = inquiryJpaRepository.findById(fixture.inquiry().getId()).orElseThrow();
+
+    assertEquals(OrderStatus.PICKED_UP, pickedUp.status());
+    assertEquals(InquiryStatus.WAITING, inquiry.getStatus());
+    assertEquals(currentSubmission.getId(), inquiry.getCurrentOrderFormSubmissionId());
+  }
+
+  @Test
   @DisplayName("허용되지 않은 주문 상태 전이는 차단한다")
   void rejectsInvalidTransitions() {
     Fixture fixture = prepareFixture("order-invalid");
@@ -862,8 +892,12 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
     storeRefundPolicyJpaRepository.flush();
     Inquiry inquiry =
         inquiryJpaRepository.saveAndFlush(Inquiry.create(store.getId(), buyer.getId()));
+    OrderFormSubmission submission = createSubmission(store, buyer, inquiry, pickupDaysFromToday);
+    inquiry.reopenSellerOnSubmission(submission.getId());
+    inquiryJpaRepository.saveAndFlush(inquiry);
     OrderConfirmation confirmation = orderConfirmationJpaRepository.saveAndFlush(
-        createConfirmation(inquiry.getId(), seller.getId(), pickupAt(pickupDaysFromToday)));
+        createConfirmation(
+            inquiry.getId(), submission.getId(), seller.getId(), pickupAt(pickupDaysFromToday)));
     PaymentAttempt paymentAttempt =
         paymentAttemptJpaRepository.saveAndFlush(createPaymentAttempt(confirmation, buyer));
     Order order = orderJpaRepository.saveAndFlush(Order.create(
@@ -882,10 +916,10 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
   }
 
   private OrderConfirmation createConfirmation(
-      UUID inquiryId, UUID sellerUserId, Instant pickupAt) {
+      UUID inquiryId, UUID submissionId, UUID sellerUserId, Instant pickupAt) {
     OrderConfirmation confirmation = OrderConfirmation.create(
         inquiryId,
-        null,
+        submissionId,
         sellerUserId,
         "초코 케이크 1호",
         "딸기 토핑",
@@ -899,6 +933,24 @@ class OrderStateServiceIntegrationTest extends IntegrationTestSupport {
     confirmation.sent(Instant.parse("2026-08-30T01:00:00Z"));
     confirmation.markPaid();
     return confirmation;
+  }
+
+  private OrderFormSubmission createSubmission(
+      Store store, User buyer, Inquiry inquiry, int pickupDaysFromToday) {
+    OrderFormTemplate template =
+        orderFormTemplateJpaRepository.saveAndFlush(
+            OrderFormTemplate.create(store.getId(), "주문서"));
+    OrderFormSubmission submission = OrderFormSubmission.create(
+        inquiry.getId(),
+        template.getId(),
+        buyer.getId(),
+        LocalDate.now(KOREA_ZONE_ID).plus(pickupDaysFromToday, ChronoUnit.DAYS),
+        LocalTime.NOON,
+        "[{\"label\":\"메뉴명\",\"value\":\"초코 케이크\"}]",
+        "[]",
+        true);
+    submission.markSellerViewed(Instant.parse("2026-08-30T00:00:00Z"));
+    return orderFormSubmissionJpaRepository.saveAndFlush(submission);
   }
 
   private Instant pickupAt(int daysFromToday) {

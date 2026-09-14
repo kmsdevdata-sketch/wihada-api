@@ -21,6 +21,7 @@ class SellerInquiryChatDetailResponseTest {
         new InquiryChatDetail.Participant(
             UUID.randomUUID(), "구매자", "010-1234-5678", "https://example.com/profile.webp"),
         null,
+        UUID.randomUUID(),
         Instant.parse("2026-09-09T10:00:00Z"),
         Instant.parse("2026-09-09T09:00:00Z"),
         Instant.parse("2026-09-09T08:00:00Z"));

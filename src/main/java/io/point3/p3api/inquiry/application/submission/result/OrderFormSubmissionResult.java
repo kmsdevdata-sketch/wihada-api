@@ -20,6 +20,7 @@ public record OrderFormSubmissionResult(
     List<OrderOptionRow> optionRows,
     boolean cancellationRefundAgreed,
     Instant sellerViewedAt,
+    boolean current,
     Instant submittedAt) {
 
   public OrderFormSubmissionResult {
@@ -31,7 +32,8 @@ public record OrderFormSubmissionResult(
       OrderFormSubmission submission,
       String answers,
       List<OrderFormReferenceAssetResult> referenceAssets,
-      List<OrderOptionRow> optionRows) {
+      List<OrderOptionRow> optionRows,
+      UUID currentOrderFormSubmissionId) {
     return new OrderFormSubmissionResult(
         submission.getId(),
         submission.getInquiryId(),
@@ -44,6 +46,7 @@ public record OrderFormSubmissionResult(
         optionRows,
         submission.isCancellationRefundAgreed(),
         submission.getSellerViewedAt(),
+        submission.getId().equals(currentOrderFormSubmissionId),
         submission.getSubmittedAt());
   }
 

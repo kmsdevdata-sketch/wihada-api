@@ -1,8 +1,10 @@
 package io.point3.p3api.inquiry.domain.entity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.point3.p3api.inquiry.domain.type.InquiryStatus;
 import java.time.Instant;
@@ -49,17 +51,35 @@ class InquiryTest {
     Inquiry inquiry = Inquiry.create(UUID.randomUUID(), UUID.randomUUID());
     Instant deletedAt = Instant.parse("2026-08-25T00:00:00Z");
     Instant purgedAt = Instant.parse("2026-09-25T00:00:00Z");
+    UUID submissionId = UUID.randomUUID();
 
     inquiry.markInProgressOnSellerReview();
     inquiry.moveSellerToTrash(deletedAt);
     ReflectionTestUtils.setField(inquiry, "sellerPurgedAt", purgedAt);
 
-    inquiry.reopenSellerOnSubmission();
+    inquiry.reopenSellerOnSubmission(submissionId);
 
     assertNull(inquiry.getSellerDeletedAt());
     assertNull(inquiry.getSellerPurgedAt());
+    assertEquals(submissionId, inquiry.getCurrentOrderFormSubmissionId());
     assertEquals(InquiryStatus.WAITING, inquiry.getStatus());
     assertEquals(InquiryStatus.WAITING, inquiry.statusForSeller());
+  }
+
+  @Test
+  @DisplayName("현재 주문서를 확인한 경우에만 문의 상태를 상담중으로 전환한다")
+  void marksInProgressOnlyForCurrentSubmission() {
+    Inquiry inquiry = Inquiry.create(UUID.randomUUID(), UUID.randomUUID());
+    UUID currentSubmissionId = UUID.randomUUID();
+    UUID oldSubmissionId = UUID.randomUUID();
+
+    inquiry.reopenSellerOnSubmission(currentSubmissionId);
+    boolean oldChanged = inquiry.markReviewIfCurrent(oldSubmissionId);
+    boolean currentChanged = inquiry.markReviewIfCurrent(currentSubmissionId);
+
+    assertFalse(oldChanged);
+    assertTrue(currentChanged);
+    assertEquals(InquiryStatus.IN_PROGRESS, inquiry.getStatus());
   }
 
   @Test
