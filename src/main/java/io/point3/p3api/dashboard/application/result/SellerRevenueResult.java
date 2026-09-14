@@ -6,7 +6,9 @@ public record SellerRevenueResult(
     LocalDate startDate,
     LocalDate endDate,
     long paymentRevenueAmount,
+    long succeededPaymentCount,
     long completedRefundAmount,
+    long completedRefundCount,
     long netSalesAmount,
     int settlementFeeRateBasisPoints,
     long settlementFeeAmount,
@@ -16,7 +18,9 @@ public record SellerRevenueResult(
       LocalDate startDate,
       LocalDate endDate,
       long paymentRevenueAmount,
+      long succeededPaymentCount,
       long completedRefundAmount,
+      long completedRefundCount,
       int settlementFeeRateBasisPoints) {
     long netSalesAmount = paymentRevenueAmount - completedRefundAmount;
     long settlementFeeAmount = calculateFee(netSalesAmount, settlementFeeRateBasisPoints);
@@ -25,7 +29,9 @@ public record SellerRevenueResult(
         startDate,
         endDate,
         paymentRevenueAmount,
+        succeededPaymentCount,
         completedRefundAmount,
+        completedRefundCount,
         netSalesAmount,
         settlementFeeRateBasisPoints,
         settlementFeeAmount,

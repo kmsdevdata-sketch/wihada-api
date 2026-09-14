@@ -14,5 +14,7 @@ public interface PaymentAttemptPersistencePort {
 
   Optional<PaymentAttempt> findByPoint3SessionId(String point3SessionId);
 
+  List<PaymentAttempt> findAllById(List<UUID> paymentAttemptIds);
+
   List<PaymentAttempt> findAllByConfirmationId(UUID confirmationId);
 }

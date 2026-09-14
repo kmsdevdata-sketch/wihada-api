@@ -28,4 +28,35 @@ public interface RefundJpaRepository
       @Param("status") RefundStatus status,
       @Param("startInclusive") Instant startInclusive,
       @Param("endExclusive") Instant endExclusive);
+
+  @Query("""
+      select count(r)
+      from Refund r, Order o
+      where r.orderId = o.id
+        and o.storeId = :storeId
+        and r.status = :status
+        and r.completedAt >= :startInclusive
+        and r.completedAt < :endExclusive
+      """)
+  long countCompleted(
+      @Param("storeId") UUID storeId,
+      @Param("status") RefundStatus status,
+      @Param("startInclusive") Instant startInclusive,
+      @Param("endExclusive") Instant endExclusive);
+
+  @Query("""
+      select r
+      from Refund r, Order o
+      where r.orderId = o.id
+        and o.storeId = :storeId
+        and r.status = :status
+        and r.completedAt >= :startInclusive
+        and r.completedAt < :endExclusive
+      order by r.completedAt desc
+      """)
+  List<Refund> findCompletedByStoreId(
+      @Param("storeId") UUID storeId,
+      @Param("status") RefundStatus status,
+      @Param("startInclusive") Instant startInclusive,
+      @Param("endExclusive") Instant endExclusive);
 }

@@ -37,4 +37,17 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
     return refundJpaRepository.sumCompletedAmount(
         storeId, RefundStatus.COMPLETED, startInclusive, endExclusive);
   }
+
+  @Override
+  public long countCompleted(UUID storeId, Instant startInclusive, Instant endExclusive) {
+    return refundJpaRepository.countCompleted(
+        storeId, RefundStatus.COMPLETED, startInclusive, endExclusive);
+  }
+
+  @Override
+  public List<Refund> findCompletedByStoreId(
+      UUID storeId, Instant startInclusive, Instant endExclusive) {
+    return refundJpaRepository.findCompletedByStoreId(
+        storeId, RefundStatus.COMPLETED, startInclusive, endExclusive);
+  }
 }

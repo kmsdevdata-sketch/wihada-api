@@ -1,7 +1,10 @@
 package io.point3.p3api.dashboard.application.query;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.point3.p3api.dashboard.application.result.SellerRevenueTransactionResult;
 import io.point3.p3api.IntegrationTestSupport;
 import io.point3.p3api.chat.domain.entity.ChatTimelineItem;
 import io.point3.p3api.chat.infrastructure.persistence.ChatTimelineItemJpaRepository;
@@ -16,6 +19,7 @@ import io.point3.p3api.order.infrastructure.persistence.OrderConfirmationJpaRepo
 import io.point3.p3api.order.infrastructure.persistence.OrderJpaRepository;
 import io.point3.p3api.payment.domain.entity.PaymentAttempt;
 import io.point3.p3api.payment.domain.entity.Refund;
+import io.point3.p3api.payment.domain.type.RefundOutcome;
 import io.point3.p3api.payment.infrastructure.persistence.PaymentAttemptJpaRepository;
 import io.point3.p3api.payment.infrastructure.persistence.RefundJpaRepository;
 import io.point3.p3api.store.domain.entity.Store;
@@ -28,6 +32,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -88,7 +93,9 @@ class SellerDashboardServiceIntegrationTest extends IntegrationTestSupport {
     assertEquals(LocalDate.parse("2026-08-24"), result.weekStartDate());
     assertEquals(LocalDate.parse("2026-08-30"), result.weekEndDate());
     assertEquals(170_000, result.currentMonthRevenue().paymentRevenueAmount());
+    assertEquals(3, result.currentMonthRevenue().succeededPaymentCount());
     assertEquals(20_000, result.currentMonthRevenue().completedRefundAmount());
+    assertEquals(1, result.currentMonthRevenue().completedRefundCount());
     assertEquals(150_000, result.currentMonthRevenue().netSalesAmount());
     assertEquals(450, result.currentMonthRevenue().settlementFeeAmount());
     assertEquals(149_550, result.currentMonthRevenue().settlementEstimateAmount());
@@ -117,11 +124,82 @@ class SellerDashboardServiceIntegrationTest extends IntegrationTestSupport {
     assertEquals(LocalDate.parse("2026-08-02"), result.startDate());
     assertEquals(LocalDate.parse("2026-08-20"), result.endDate());
     assertEquals(80_000, result.paymentRevenueAmount());
+    assertEquals(1, result.succeededPaymentCount());
     assertEquals(10_000, result.completedRefundAmount());
+    assertEquals(1, result.completedRefundCount());
     assertEquals(70_000, result.netSalesAmount());
     assertEquals(30, result.settlementFeeRateBasisPoints());
     assertEquals(210, result.settlementFeeAmount());
     assertEquals(69_790, result.settlementEstimateAmount());
+  }
+
+  @Test
+  @DisplayName("매출 거래 목록은 결제와 완료 환불 거래를 분리해 조회한다")
+  void getsRevenueTransactions() {
+    Fixture fixture = prepareFixture("dashboard-transactions");
+    Order previousPaymentOrder =
+        saveOrder(fixture, 100_000, "2026-07-31T14:59:59Z", "2026-08-29T01:00:00Z");
+    Refund currentRefund =
+        saveCompletedRefund(fixture, previousPaymentOrder, 20_000, "2026-08-02T00:00:00Z");
+    Order laterRefundOrder =
+        saveOrder(fixture, 80_000, "2026-08-02T00:00:00Z", "2026-08-29T02:00:00Z");
+    Refund laterRefund =
+        saveCompletedRefund(fixture, laterRefundOrder, 10_000, "2026-08-21T00:00:00Z");
+    Order partialRefundOrder =
+        saveOrder(fixture, 60_000, "2026-08-03T00:00:00Z", "2026-08-29T03:00:00Z");
+    Refund partialRefund =
+        saveCompletedRefund(fixture, partialRefundOrder, 15_000, "2026-08-04T00:00:00Z");
+    Order manualRefundOrder =
+        saveOrder(fixture, 40_000, "2026-08-05T00:00:00Z", "2026-08-29T04:00:00Z");
+    Refund manualRefund =
+        saveManualRefund(fixture, manualRefundOrder, 5_000, "2026-08-06T00:00:00Z");
+    Refund failedRefund =
+        saveFailedRefund(fixture, partialRefundOrder, 3_000, "2026-08-07T00:00:00Z");
+    saveOrder(fixture, 30_000, "2026-08-20T15:00:00Z", "2026-08-29T05:00:00Z");
+
+    Fixture otherFixture = prepareFixture("dashboard-transactions-other");
+    Order otherOrder =
+        saveOrder(otherFixture, 90_000, "2026-08-03T00:00:00Z", "2026-08-29T06:00:00Z");
+    saveCompletedRefund(otherFixture, otherOrder, 7_000, "2026-08-04T00:00:00Z");
+
+    List<SellerRevenueTransactionResult> payments =
+        sellerDashboardQueryUseCase.getRevenueTransactions(SellerRevenueTransactionQueryCommand.of(
+            fixture.store().getId(),
+            SellerRevenueTransactionType.PAYMENT,
+            LocalDate.parse("2026-08-02"),
+            LocalDate.parse("2026-08-20")));
+    List<SellerRevenueTransactionResult> refunds =
+        sellerDashboardQueryUseCase.getRevenueTransactions(SellerRevenueTransactionQueryCommand.of(
+            fixture.store().getId(),
+            SellerRevenueTransactionType.REFUND,
+            LocalDate.parse("2026-08-02"),
+            LocalDate.parse("2026-08-20")));
+
+    assertEquals(3, payments.size());
+    SellerRevenueTransactionResult payment = findByTransactionId(
+        payments, laterRefundOrder.getPaymentAttemptId());
+    assertEquals(SellerRevenueTransactionType.PAYMENT, payment.transactionType());
+    assertEquals(laterRefundOrder.getId(), payment.orderId());
+    assertEquals(80_000, payment.amount());
+    assertEquals(Instant.parse("2026-08-02T00:00:00Z"), payment.occurredAt());
+    assertNull(payment.refundId());
+    assertEquals(fixture.buyer().getName(), payment.buyerName());
+    assertFalse(hasTransactionId(payments, previousPaymentOrder.getPaymentAttemptId()));
+    assertFalse(hasTransactionId(payments, otherOrder.getPaymentAttemptId()));
+
+    assertEquals(3, refunds.size());
+    SellerRevenueTransactionResult refund = findByTransactionId(refunds, currentRefund.getId());
+    assertEquals(SellerRevenueTransactionType.REFUND, refund.transactionType());
+    assertEquals(previousPaymentOrder.getId(), refund.orderId());
+    assertEquals(previousPaymentOrder.getPaymentAttemptId(), refund.paymentAttemptId());
+    assertEquals(currentRefund.getId(), refund.refundId());
+    assertEquals(20_000, refund.amount());
+    assertEquals(Instant.parse("2026-08-02T00:00:00Z"), refund.occurredAt());
+    assertEquals(fixture.buyer().getName(), refund.buyerName());
+    assertEquals(15_000, findByTransactionId(refunds, partialRefund.getId()).amount());
+    assertEquals(5_000, findByTransactionId(refunds, manualRefund.getId()).amount());
+    assertFalse(hasTransactionId(refunds, laterRefund.getId()));
+    assertFalse(hasTransactionId(refunds, failedRefund.getId()));
   }
 
   private Fixture prepareFixture(String prefix) {
@@ -155,11 +233,40 @@ class SellerDashboardServiceIntegrationTest extends IntegrationTestSupport {
         confirmation.getPickupAt()));
   }
 
-  private void saveCompletedRefund(Fixture fixture, Order order, long amount, String completedAt) {
+  private Refund saveCompletedRefund(Fixture fixture, Order order, long amount, String completedAt) {
     Refund refund = Refund.create(
         order.getId(), order.getPaymentAttemptId(), fixture.seller().getId(), amount, "환불 완료");
     refund.complete(Instant.parse(completedAt));
-    refundJpaRepository.saveAndFlush(refund);
+    return refundJpaRepository.saveAndFlush(refund);
+  }
+
+  private Refund saveManualRefund(Fixture fixture, Order order, long amount, String completedAt) {
+    Refund refund = Refund.create(
+        order.getId(), order.getPaymentAttemptId(), fixture.seller().getId(), amount, "수동 환불");
+    refund.startProcessing();
+    refund.fail(
+        RefundOutcome.MANUAL_REQUIRED,
+        null,
+        "SETTLED",
+        "정산 완료",
+        null,
+        Instant.parse("2026-08-05T00:00:00Z"));
+    refund.completeManually(fixture.seller().getId(), Instant.parse(completedAt));
+    return refundJpaRepository.saveAndFlush(refund);
+  }
+
+  private Refund saveFailedRefund(Fixture fixture, Order order, long amount, String failedAt) {
+    Refund refund = Refund.create(
+        order.getId(), order.getPaymentAttemptId(), fixture.seller().getId(), amount, "환불 실패");
+    refund.startProcessing();
+    refund.fail(
+        RefundOutcome.RETRYABLE,
+        null,
+        "TEMPORARY_FAILURE",
+        "일시 실패",
+        null,
+        Instant.parse(failedAt));
+    return refundJpaRepository.saveAndFlush(refund);
   }
 
   private OrderConfirmation createConfirmation(
@@ -202,6 +309,19 @@ class SellerDashboardServiceIntegrationTest extends IntegrationTestSupport {
         role,
         "010-0000-0000",
         SignupProvider.GOOGLE));
+  }
+
+  private SellerRevenueTransactionResult findByTransactionId(
+      List<SellerRevenueTransactionResult> results, UUID transactionId) {
+    return results.stream()
+        .filter(result -> result.transactionId().equals(transactionId))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private boolean hasTransactionId(
+      List<SellerRevenueTransactionResult> results, UUID transactionId) {
+    return results.stream().anyMatch(result -> result.transactionId().equals(transactionId));
   }
 
   private record Fixture(User seller, User buyer, Store store, Inquiry inquiry) {}
