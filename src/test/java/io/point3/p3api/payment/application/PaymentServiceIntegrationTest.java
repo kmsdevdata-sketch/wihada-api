@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,6 +24,7 @@ import io.point3.p3api.inquiry.application.draft.model.OrderFormDraftData;
 import io.point3.p3api.inquiry.application.open.InquiryOpenService;
 import io.point3.p3api.inquiry.application.startreference.OrderStartReferenceAssetService;
 import io.point3.p3api.inquiry.application.submission.create.OrderFormSubmissionService;
+import io.point3.p3api.inquiry.application.submission.view.SellerOrderFormSubmissionViewUseCase;
 import io.point3.p3api.inquiry.domain.entity.Inquiry;
 import io.point3.p3api.inquiry.domain.entity.OrderFormSubmission;
 import io.point3.p3api.inquiry.domain.type.InquiryStatus;
@@ -30,6 +33,7 @@ import io.point3.p3api.inquiry.infrastructure.persistence.InquiryJpaRepository;
 import io.point3.p3api.notification.domain.type.NotificationType;
 import io.point3.p3api.notification.infrastructure.persistence.NotificationJpaRepository;
 import io.point3.p3api.order.application.OrderConfirmationService;
+import io.point3.p3api.order.application.port.OrderStatusHistoryPersistencePort;
 import io.point3.p3api.order.application.result.SendOrderConfirmationResult;
 import io.point3.p3api.order.application.send.SendOrderConfirmationCommand;
 import io.point3.p3api.order.application.state.OrderConfirmationStateService;
@@ -85,6 +89,7 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -101,6 +106,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -134,6 +140,12 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
 
   @Autowired
   private OrderFormSubmissionService submissionService;
+
+  @Autowired
+  private SellerOrderFormSubmissionViewUseCase sellerOrderFormSubmissionViewUseCase;
+
+  @MockitoSpyBean
+  private OrderStatusHistoryPersistencePort orderStatusHistoryPersistencePort;
 
   @Autowired
   private OrderFormService orderFormService;
@@ -610,6 +622,8 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
   @DisplayName("동시 결제 승인은 주문과 완료 후처리를 한 번만 생성한다")
   void preventsDuplicateCompletionFromConcurrentCaptures() throws Exception {
     Fixture fixture = prepareFixture("payment-concurrent-capture");
+    sellerOrderFormSubmissionViewUseCase.markViewed(
+        fixture.inquiry().getId(), fixture.submission().getId(), fixture.store().id());
     SendOrderConfirmationResult confirmation = sendConfirmation(fixture);
     orderConfirmationStateService.markBuyerViewed(
         fixture.inquiry().getId(),
@@ -653,6 +667,82 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
           orderJpaRepository
               .findAllByBuyerUserIdOrderByCreatedAtDesc(fixture.buyer().getId())
               .size());
+      assertEquals(1, paymentCompletedNotificationCount(fixture.buyer().getId()));
+      assertEquals(1, paymentCompletedNotificationCount(fixture.seller().getId()));
+      assertEquals(1, paymentCompletedTimelineCount(fixture.inquiry().getId(), order.getId()));
+    } finally {
+      point3PaymentPort.releaseCapture();
+      executorService.shutdownNow();
+    }
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  @DisplayName("외부 승인 후 내부 처리 실패 시 대기 중인 승인 요청의 동작을 확인한다")
+  void retriesCaptureAfterConcurrentInternalRollback() throws Exception {
+    Fixture fixture = prepareFixture("payment-capture-rollback");
+    sellerOrderFormSubmissionViewUseCase.markViewed(
+        fixture.inquiry().getId(), fixture.submission().getId(), fixture.store().id());
+    SendOrderConfirmationResult confirmation = sendConfirmation(fixture);
+    orderConfirmationStateService.markBuyerViewed(
+        fixture.inquiry().getId(),
+        confirmation.orderConfirmation().id(),
+        fixture.buyer().getId());
+    PaymentPreparationResult prepared = paymentPrepareUseCase.prepare(PreparePaymentCommand.of(
+        fixture.inquiry().getId(),
+        confirmation.orderConfirmation().id(),
+        fixture.buyer().getId()));
+
+    AtomicBoolean failOnce = new AtomicBoolean(true);
+    doAnswer(invocation -> {
+      if (failOnce.compareAndSet(true, false)) {
+        throw new IllegalStateException("simulated failure after external capture");
+      }
+      return invocation.callRealMethod();
+    }).when(orderStatusHistoryPersistencePort).save(any());
+
+    point3PaymentPort.blockCapture();
+    ExecutorService executorService = Executors.newFixedThreadPool(2);
+    CountDownLatch secondCaptureStarted = new CountDownLatch(1);
+
+    try {
+      Future<PaymentCaptureResult> first =
+          executorService.submit(() -> paymentCaptureUseCase.capture(CapturePaymentCommand.of(
+              prepared.paymentAttemptId(),
+              fixture.buyer().getId(),
+              prepared.sessionId(),
+              "payer-new")));
+      assertTrue(point3PaymentPort.awaitCaptureStarted());
+
+      Future<PaymentCaptureResult> second = executorService.submit(() -> {
+        secondCaptureStarted.countDown();
+        return paymentCaptureUseCase.capture(CapturePaymentCommand.of(
+            prepared.paymentAttemptId(),
+            fixture.buyer().getId(),
+            prepared.sessionId(),
+            "payer-new"));
+      });
+      assertTrue(secondCaptureStarted.await(5, TimeUnit.SECONDS));
+      assertFalse(second.isDone());
+
+      point3PaymentPort.releaseCapture();
+      ExecutionException firstFailure =
+          assertThrows(ExecutionException.class, () -> first.get(10, TimeUnit.SECONDS));
+      assertTrue(firstFailure.getCause() instanceof IllegalStateException);
+      assertEquals("simulated failure after external capture", firstFailure.getCause().getMessage());
+      PaymentCaptureResult secondResult = second.get(10, TimeUnit.SECONDS);
+      Order order =
+          orderJpaRepository.findByPaymentAttemptId(prepared.paymentAttemptId()).orElseThrow();
+
+      assertEquals(2, point3PaymentPort.captureCount());
+      assertEquals(PaymentAttemptStatus.SUCCEEDED, secondResult.status());
+      assertEquals(PaymentAttemptStatus.SUCCEEDED,
+          paymentAttemptJpaRepository.findById(prepared.paymentAttemptId()).orElseThrow().getStatus());
+      assertEquals(order.getId(), secondResult.orderId());
+      assertEquals(1, orderJpaRepository
+          .findAllByBuyerUserIdOrderByCreatedAtDesc(fixture.buyer().getId())
+          .size());
+      assertEquals(1, orderStatusHistoryPersistencePort.findAllByOrderId(order.getId()).size());
       assertEquals(1, paymentCompletedNotificationCount(fixture.buyer().getId()));
       assertEquals(1, paymentCompletedNotificationCount(fixture.seller().getId()));
       assertEquals(1, paymentCompletedTimelineCount(fixture.inquiry().getId(), order.getId()));

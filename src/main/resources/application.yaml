@@ -102,3 +102,7 @@ p3:
     api-key: ${P3_JUSO_SEARCH_API_KEY:}
     count-per-page: ${P3_JUSO_SEARCH_COUNT_PER_PAGE:10}
     request-timeout: ${P3_JUSO_SEARCH_REQUEST_TIMEOUT:PT3S}
+
+logging:
+  level:
+    sql: debug

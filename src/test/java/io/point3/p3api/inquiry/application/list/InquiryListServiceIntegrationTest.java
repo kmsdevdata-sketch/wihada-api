@@ -40,7 +40,9 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -156,6 +158,39 @@ class InquiryListServiceIntegrationTest extends IntegrationTestSupport {
     assertEquals(item.latestEvent().createdAt(), item.latestEventAt());
     assertEquals(submission.getId(), item.latestOrderFormSubmission().submissionId());
     assertEquals(submission.getSubmittedAt(), item.latestOrderFormSubmission().submittedAt());
+  }
+
+  @Test
+  @DisplayName("판매자 상담 목록은 문의별 읽지 않은 항목 수를 일괄 조회한다")
+  void getsSellerUnreadCountsForMultipleInquiries() {
+    Fixture fixture = prepareFixture("inquiry-list-unread-counts");
+    User otherBuyer = saveUser(UserRole.BUYER, "inquiry-list-unread-counts-other-buyer");
+    Inquiry otherInquiry = inquiryOpenService.open(
+        OpenInquiryCommand.of(fixture.firstStore().id(), otherBuyer.getId()));
+
+    chatTimelineItemPublisher.publishMessage(
+        fixture.firstInquiry().getId(), fixture.buyer().getId(), UUID.randomUUID());
+    chatTimelineItemPublisher.publishMessage(
+        fixture.firstInquiry().getId(), fixture.buyer().getId(), UUID.randomUUID());
+    chatTimelineItemPublisher.publishMessage(
+        fixture.firstInquiry().getId(), fixture.firstSeller().getId(), UUID.randomUUID());
+    chatTimelineItemPublisher.publishMessage(
+        otherInquiry.getId(), otherBuyer.getId(), UUID.randomUUID());
+    otherInquiry.markSellerRead(Instant.now().plusSeconds(3600));
+    inquiryJpaRepository.saveAndFlush(otherInquiry);
+
+    List<InquiryListItem> sellerItems = inquiryListService.getSellerInquiries(
+        fixture.firstStore().id(), fixture.firstSeller().getId(), null);
+    Map<UUID, Long> unreadCountsByInquiryId = sellerItems.stream()
+        .collect(Collectors.toMap(InquiryListItem::inquiryId, InquiryListItem::unreadCount));
+    List<InquiryListItem> unreadOnlyItems = inquiryListService.getSellerInquiries(
+        fixture.firstStore().id(), fixture.firstSeller().getId(), null, true);
+
+    assertEquals(2, sellerItems.size());
+    assertEquals(2L, unreadCountsByInquiryId.get(fixture.firstInquiry().getId()));
+    assertEquals(0L, unreadCountsByInquiryId.get(otherInquiry.getId()));
+    assertEquals(1, unreadOnlyItems.size());
+    assertEquals(fixture.firstInquiry().getId(), unreadOnlyItems.getFirst().inquiryId());
   }
 
   @Test

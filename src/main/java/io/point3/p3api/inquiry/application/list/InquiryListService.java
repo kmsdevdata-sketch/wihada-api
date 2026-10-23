@@ -2,6 +2,7 @@ package io.point3.p3api.inquiry.application.list;
 
 import io.point3.p3api.chat.application.port.ChatMessagePort;
 import io.point3.p3api.chat.application.port.ChatTimelineItemPort;
+import io.point3.p3api.chat.application.port.UnreadCountTarget;
 import io.point3.p3api.chat.domain.entity.ChatTimelineItem;
 import io.point3.p3api.chat.domain.type.ChatTimelineItemType;
 import io.point3.p3api.exception.BaseException;
@@ -100,15 +101,21 @@ public class InquiryListService implements InquiryListUseCase {
     Map<UUID, InquiryListItem.LatestOrderFormSubmission> latestSubmissionByInquiryId =
         latestSubmissionByInquiryId(inquiries);
 
+    Map<UUID, Long> unreadCountsByInquiryId = chatTimelineItemPort.countUnread(
+        inquiries.stream()
+            .map(inquiry -> new UnreadCountTarget(inquiry.getId(), inquiry.getSellerLastReadAt()))
+            .toList(),
+        sellerUserId);
+
     return inquiries.stream()
         .map(inquiry -> toSellerItem(
             inquiry,
-            sellerUserId,
             store,
             buyersById,
             profileImageDeliveryUrlByUserId,
             latestEventByInquiryId,
-            latestSubmissionByInquiryId))
+            latestSubmissionByInquiryId,
+            unreadCountsByInquiryId))
         .filter(item -> !unreadOnly || item.unreadCount() > 0)
         .sorted(byLatestEvent())
         .toList();
@@ -187,12 +194,12 @@ public class InquiryListService implements InquiryListUseCase {
 
   private InquiryListItem toSellerItem(
       Inquiry inquiry,
-      UUID sellerUserId,
       Store store,
       Map<UUID, User> buyersById,
       Map<UUID, String> profileImageDeliveryUrlByUserId,
       Map<UUID, InquiryListItem.LatestEvent> latestEventByInquiryId,
-      Map<UUID, InquiryListItem.LatestOrderFormSubmission> latestSubmissionByInquiryId) {
+      Map<UUID, InquiryListItem.LatestOrderFormSubmission> latestSubmissionByInquiryId,
+      Map<UUID, Long> unreadCountsByInquiryId) {
     User buyer = findBuyer(inquiry, buyersById);
     InquiryChatDetail detail = InquiryChatDetail.of(
         inquiry,
@@ -206,12 +213,12 @@ public class InquiryListService implements InquiryListUseCase {
         inquiry.getSellerLastReadAt(),
         inquiry.getBuyerLastReadAt());
     InquiryListItem.LatestEvent latestEvent = latestEventByInquiryId.get(inquiry.getId());
-    return toItem(
+    return InquiryListItem.from(
         inquiry,
-        sellerUserId,
-        inquiry.getSellerLastReadAt(),
         detail,
         inquiry.statusForSeller(),
+        unreadCountsByInquiryId.getOrDefault(inquiry.getId(), 0L),
+        latestEvent == null ? null : latestEvent.createdAt(),
         latestEvent,
         latestSubmissionByInquiryId.get(inquiry.getId()));
   }
