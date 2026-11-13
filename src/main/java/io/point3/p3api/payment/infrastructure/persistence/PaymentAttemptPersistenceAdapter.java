@@ -2,10 +2,13 @@ package io.point3.p3api.payment.infrastructure.persistence;
 
 import io.point3.p3api.payment.application.port.PaymentAttemptPersistencePort;
 import io.point3.p3api.payment.domain.entity.PaymentAttempt;
+import io.point3.p3api.payment.domain.type.PaymentAttemptStatus;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,5 +46,17 @@ public class PaymentAttemptPersistenceAdapter implements PaymentAttemptPersisten
   @Override
   public List<PaymentAttempt> findAllByConfirmationId(UUID confirmationId) {
     return paymentAttemptJpaRepository.findAllByConfirmationIdOrderByCreatedAtDesc(confirmationId);
+  }
+
+  @Override
+  public List<UUID> findRecoverableIdsBefore(Instant cutoff, int limit) {
+    return paymentAttemptJpaRepository
+        .findRecoverableBefore(
+            List.of(PaymentAttemptStatus.IN_PROGRESS, PaymentAttemptStatus.NEEDS_CONFIRMATION),
+            cutoff,
+            PageRequest.of(0, limit))
+        .stream()
+        .map(PaymentAttempt::getId)
+        .toList();
   }
 }

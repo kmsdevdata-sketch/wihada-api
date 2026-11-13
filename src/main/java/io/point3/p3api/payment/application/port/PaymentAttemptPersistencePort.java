@@ -1,6 +1,7 @@
 package io.point3.p3api.payment.application.port;
 
 import io.point3.p3api.payment.domain.entity.PaymentAttempt;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -17,4 +18,6 @@ public interface PaymentAttemptPersistencePort {
   List<PaymentAttempt> findAllById(List<UUID> paymentAttemptIds);
 
   List<PaymentAttempt> findAllByConfirmationId(UUID confirmationId);
+
+  List<UUID> findRecoverableIdsBefore(Instant cutoff, int limit);
 }

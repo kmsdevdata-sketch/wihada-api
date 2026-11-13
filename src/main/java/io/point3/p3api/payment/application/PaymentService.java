@@ -32,27 +32,33 @@ import io.point3.p3api.payment.application.result.Point3CaptureResult;
 import io.point3.p3api.payment.application.result.Point3PaymentSession;
 import io.point3.p3api.payment.config.Point3Properties;
 import io.point3.p3api.payment.domain.entity.PaymentAttempt;
+import io.point3.p3api.payment.domain.type.PaymentAttemptStatus;
 import io.point3.p3api.store.application.port.StorePersistencePort;
 import io.point3.p3api.store.domain.entity.Store;
 import io.point3.p3api.user.application.port.UserPersistencePort;
 import io.point3.p3api.user.domain.entity.User;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Slf4j
 @Service
-@Transactional
 @RequiredArgsConstructor
 public class PaymentService implements PaymentPrepareUseCase, PaymentCaptureUseCase {
 
   private static final DateTimeFormatter ORDER_DATE_FORMATTER = DateTimeFormatter.BASIC_ISO_DATE;
+  private static final Duration RECOVERY_DELAY = Duration.ofMinutes(2);
 
   private final InquiryChatAccessService inquiryChatAccessService;
   private final OrderConfirmationPersistencePort orderConfirmationPersistencePort;
@@ -67,8 +73,10 @@ public class PaymentService implements PaymentPrepareUseCase, PaymentCaptureUseC
   private final Point3PaymentPort point3PaymentPort;
   private final Point3Properties point3Properties;
   private final Clock clock;
+  private final PlatformTransactionManager transactionManager;
 
   @Override
+  @Transactional
   public PaymentPreparationResult prepare(PreparePaymentCommand command) {
     inquiryChatAccessService.getBuyerInquiry(command.inquiryId(), command.buyerUserId());
 
@@ -112,41 +120,111 @@ public class PaymentService implements PaymentPrepareUseCase, PaymentCaptureUseC
   @Override
   public PaymentCaptureResult capture(CapturePaymentCommand command) {
     validateCaptureMessage(command);
+    CaptureStep step = transaction(() -> beginCapture(command));
+    if (step.action() == CaptureAction.RETURN) {
+      return step.result();
+    }
 
+    Point3CaptureResult providerResult = step.action() == CaptureAction.CAPTURE
+        ? requestCapture(step.sessionId())
+        : requestSession(step.sessionId());
+    return transaction(
+        () -> applyProviderResult(command.paymentAttemptId(), command.payerId(), providerResult));
+  }
+
+  @Scheduled(fixedDelay = 60_000)
+  public void reconcileStalePayments() {
+    Instant cutoff = Instant.now(clock).minus(RECOVERY_DELAY);
+    for (UUID paymentAttemptId : paymentAttemptPersistencePort.findRecoverableIdsBefore(cutoff, 100)) {
+      try {
+        recoverPayment(paymentAttemptId);
+      } catch (Exception e) {
+        log.error("Payment recovery failed. paymentAttemptId={}", paymentAttemptId, e);
+      }
+    }
+  }
+
+  public PaymentCaptureResult recoverPayment(UUID paymentAttemptId) {
+    CaptureStep step = transaction(() -> recoveryStep(paymentAttemptId));
+    if (step.action() == CaptureAction.RETURN) {
+      return step.result();
+    }
+    Point3CaptureResult providerResult = requestSession(step.sessionId());
+    return transaction(() -> applyProviderResult(paymentAttemptId, null, providerResult));
+  }
+
+  private CaptureStep beginCapture(CapturePaymentCommand command) {
     PaymentAttempt paymentAttempt = getPaymentAttempt(command.paymentAttemptId());
-
     validateCaptureOwner(paymentAttempt, command.buyerUserId());
     validateSession(paymentAttempt, command.sessionId());
 
-    Optional<Order> existingOrder =
-        orderPersistencePort.findByPaymentAttemptId(paymentAttempt.getId());
-
     if (paymentAttempt.needsConfirmation()) {
-      return reconcilePayment(paymentAttempt, command.payerId());
+      return new CaptureStep(CaptureAction.QUERY, null, paymentAttempt.getPoint3SessionId());
     }
 
     if (!paymentAttempt.isReady()) {
-      return PaymentCaptureResult.of(
-          paymentAttempt, existingOrder.map(Order::getId).orElse(null));
+      return currentResult(paymentAttempt);
     }
 
-    if (Instant.now(clock).isAfter(paymentAttempt.getExpiresAt())) {
-      paymentAttempt.fail("PAYMENT_SESSION_EXPIRED", Instant.now(clock));
-      return PaymentCaptureResult.of(paymentAttempt, null);
+    Instant now = Instant.now(clock);
+    if (now.isAfter(paymentAttempt.getExpiresAt())) {
+      paymentAttempt.fail("PAYMENT_SESSION_EXPIRED", now);
+      return currentResult(paymentAttempt);
     }
 
-    paymentAttempt.startCapture();
-    Point3CaptureResult captureResult = requestCapture(paymentAttempt.getPoint3SessionId());
-    validatePoint3Session(paymentAttempt, captureResult);
-
-    return applyCaptureResult(paymentAttempt, command.payerId(), captureResult);
+    paymentAttempt.startCapture(command.payerId(), now);
+    return new CaptureStep(CaptureAction.CAPTURE, null, paymentAttempt.getPoint3SessionId());
   }
 
-  private PaymentCaptureResult reconcilePayment(PaymentAttempt paymentAttempt, String payerId) {
-    Point3CaptureResult sessionResult = requestSession(paymentAttempt.getPoint3SessionId());
-    validatePoint3Session(paymentAttempt, sessionResult);
-    return applyCaptureResult(paymentAttempt, payerId, sessionResult);
+  private CaptureStep recoveryStep(UUID paymentAttemptId) {
+    PaymentAttempt paymentAttempt = getPaymentAttempt(paymentAttemptId);
+    if (paymentAttempt.getStatus() != PaymentAttemptStatus.IN_PROGRESS
+        && !paymentAttempt.needsConfirmation()) {
+      return currentResult(paymentAttempt);
+    }
+    if (isBlank(paymentAttempt.getPayerId())) {
+      throw new IllegalStateException("Payment recovery requires a saved payerId");
+    }
+    return new CaptureStep(CaptureAction.QUERY, null, paymentAttempt.getPoint3SessionId());
   }
+
+  private CaptureStep currentResult(PaymentAttempt paymentAttempt) {
+    UUID orderId = orderPersistencePort
+        .findByPaymentAttemptId(paymentAttempt.getId())
+        .map(Order::getId)
+        .orElse(null);
+    return new CaptureStep(
+        CaptureAction.RETURN, PaymentCaptureResult.of(paymentAttempt, orderId), null);
+  }
+
+  private PaymentCaptureResult applyProviderResult(
+      UUID paymentAttemptId, String requestedPayerId, Point3CaptureResult providerResult) {
+    PaymentAttempt paymentAttempt = getPaymentAttempt(paymentAttemptId);
+    validatePoint3Session(paymentAttempt, providerResult);
+    if (paymentAttempt.getStatus() != PaymentAttemptStatus.IN_PROGRESS
+        && !paymentAttempt.needsConfirmation()) {
+      return currentResult(paymentAttempt).result();
+    }
+    paymentAttempt.markReconciliationChecked(Instant.now(clock));
+    String payerId = isBlank(paymentAttempt.getPayerId())
+        ? requestedPayerId
+        : paymentAttempt.getPayerId();
+    return applyCaptureResult(paymentAttempt, payerId, providerResult);
+  }
+
+  private <T> T transaction(java.util.function.Supplier<T> action) {
+    TransactionTemplate template = new TransactionTemplate(transactionManager);
+    template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return template.execute(status -> action.get());
+  }
+
+  private enum CaptureAction {
+    CAPTURE,
+    QUERY,
+    RETURN
+  }
+
+  private record CaptureStep(CaptureAction action, PaymentCaptureResult result, String sessionId) {}
 
   private PaymentCaptureResult applyCaptureResult(
       PaymentAttempt paymentAttempt, String payerId, Point3CaptureResult captureResult) {
