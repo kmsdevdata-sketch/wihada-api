@@ -32,9 +32,7 @@ public record PaymentAttemptResult(
   }
 
   private static boolean isSessionExpired(PaymentAttempt paymentAttempt, Instant now) {
-    boolean expirable = paymentAttempt.getStatus() == PaymentAttemptStatus.READY
-        || paymentAttempt.getStatus() == PaymentAttemptStatus.IN_PROGRESS;
-
-    return expirable && now.isAfter(paymentAttempt.getExpiresAt());
+    return paymentAttempt.getStatus() == PaymentAttemptStatus.READY
+        && now.isAfter(paymentAttempt.getExpiresAt());
   }
 }

@@ -79,6 +79,7 @@ import io.point3.p3api.user.domain.entity.User;
 import io.point3.p3api.user.domain.type.SignupProvider;
 import io.point3.p3api.user.domain.type.UserRole;
 import io.point3.p3api.user.infrastructure.persistence.UserJpaRepository;
+import java.sql.Timestamp;
 import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
@@ -105,6 +106,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Propagation;
@@ -116,6 +118,7 @@ import org.springframework.transaction.annotation.Transactional;
       "p3.point3.auth-base-url=https://auth.point3.test",
       "p3.point3.payment-origin=https://widget.point3.test"
     })
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentServiceIntegrationTest extends IntegrationTestSupport {
 
   private static final ZoneId KOREA_ZONE = ZoneId.of("Asia/Seoul");
@@ -125,6 +128,12 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
 
   @Autowired
   private PaymentCaptureUseCase paymentCaptureUseCase;
+
+  @Autowired
+  private PaymentService paymentService;
+
+  @Autowired
+  private JdbcTemplate jdbcTemplate;
 
   @Autowired
   private PaymentCtaQueryUseCase paymentCtaQueryUseCase;
@@ -622,8 +631,6 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
   @DisplayName("동시 결제 승인은 주문과 완료 후처리를 한 번만 생성한다")
   void preventsDuplicateCompletionFromConcurrentCaptures() throws Exception {
     Fixture fixture = prepareFixture("payment-concurrent-capture");
-    sellerOrderFormSubmissionViewUseCase.markViewed(
-        fixture.inquiry().getId(), fixture.submission().getId(), fixture.store().id());
     SendOrderConfirmationResult confirmation = sendConfirmation(fixture);
     orderConfirmationStateService.markBuyerViewed(
         fixture.inquiry().getId(),
@@ -654,13 +661,17 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
       point3PaymentPort.releaseCapture();
       PaymentCaptureResult firstResult = first.get(5, TimeUnit.SECONDS);
       PaymentCaptureResult secondResult = second.get(5, TimeUnit.SECONDS);
+      PaymentCaptureResult confirmedResult = paymentCaptureUseCase.capture(CapturePaymentCommand.of(
+          prepared.paymentAttemptId(), fixture.buyer().getId(), prepared.sessionId(), "payer-new"));
       Order order =
           orderJpaRepository.findByPaymentAttemptId(prepared.paymentAttemptId()).orElseThrow();
 
       assertEquals(PaymentAttemptStatus.SUCCEEDED, firstResult.status());
-      assertEquals(PaymentAttemptStatus.SUCCEEDED, secondResult.status());
+      assertTrue(secondResult.status() == PaymentAttemptStatus.IN_PROGRESS
+          || secondResult.status() == PaymentAttemptStatus.SUCCEEDED);
+      assertEquals(PaymentAttemptStatus.SUCCEEDED, confirmedResult.status());
       assertEquals(order.getId(), firstResult.orderId());
-      assertEquals(order.getId(), secondResult.orderId());
+      assertEquals(order.getId(), confirmedResult.orderId());
       assertEquals(1, point3PaymentPort.captureCount());
       assertEquals(
           1,
@@ -678,11 +689,9 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
 
   @Test
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
-  @DisplayName("외부 승인 후 내부 처리 실패 시 대기 중인 승인 요청의 동작을 확인한다")
+  @DisplayName("외부 승인 후 내부 처리 실패 시 재승인 없이 세션 조회로 복구한다")
   void retriesCaptureAfterConcurrentInternalRollback() throws Exception {
     Fixture fixture = prepareFixture("payment-capture-rollback");
-    sellerOrderFormSubmissionViewUseCase.markViewed(
-        fixture.inquiry().getId(), fixture.submission().getId(), fixture.store().id());
     SendOrderConfirmationResult confirmation = sendConfirmation(fixture);
     orderConfirmationStateService.markBuyerViewed(
         fixture.inquiry().getId(),
@@ -731,14 +740,25 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
       assertTrue(firstFailure.getCause() instanceof IllegalStateException);
       assertEquals("simulated failure after external capture", firstFailure.getCause().getMessage());
       PaymentCaptureResult secondResult = second.get(10, TimeUnit.SECONDS);
+      assertEquals(PaymentAttemptStatus.IN_PROGRESS, secondResult.status());
+      assertEquals(PaymentAttemptStatus.IN_PROGRESS,
+          paymentAttemptJpaRepository.findById(prepared.paymentAttemptId()).orElseThrow().getStatus());
+      assertTrue(orderJpaRepository.findByPaymentAttemptId(prepared.paymentAttemptId()).isEmpty());
+      assertEquals(1, point3PaymentPort.captureCount());
+
+      point3PaymentPort.nextSessionStatus(Point3CaptureResult.Status.CAPTURED);
+      jdbcTemplate.update(
+          "update payment_attempts set capture_started_at = ? where id = ?",
+          Timestamp.from(Instant.now().minus(Duration.ofMinutes(3))),
+          prepared.paymentAttemptId());
+      paymentService.reconcileStalePayments();
       Order order =
           orderJpaRepository.findByPaymentAttemptId(prepared.paymentAttemptId()).orElseThrow();
 
-      assertEquals(2, point3PaymentPort.captureCount());
-      assertEquals(PaymentAttemptStatus.SUCCEEDED, secondResult.status());
+      assertEquals(1, point3PaymentPort.captureCount());
+      assertEquals(1, point3PaymentPort.sessionQueryCount());
       assertEquals(PaymentAttemptStatus.SUCCEEDED,
           paymentAttemptJpaRepository.findById(prepared.paymentAttemptId()).orElseThrow().getStatus());
-      assertEquals(order.getId(), secondResult.orderId());
       assertEquals(1, orderJpaRepository
           .findAllByBuyerUserIdOrderByCreatedAtDesc(fixture.buyer().getId())
           .size());
@@ -814,7 +834,8 @@ class PaymentServiceIntegrationTest extends IntegrationTestSupport {
   }
 
   private SendOrderConfirmationResult sendConfirmation(Fixture fixture) {
-    fixture.submission().markSellerViewed(Instant.now());
+    sellerOrderFormSubmissionViewUseCase.markViewed(
+        fixture.inquiry().getId(), fixture.submission().getId(), fixture.store().id());
     return orderConfirmationService.send(new SendOrderConfirmationCommand(
         fixture.inquiry().getId(),
         fixture.store().id(),

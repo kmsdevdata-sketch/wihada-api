@@ -56,6 +56,12 @@ public class PaymentAttempt {
   @Column(name = "completed_at")
   private Instant completedAt;
 
+  @Column(name = "capture_started_at")
+  private Instant captureStartedAt;
+
+  @Column(name = "reconciliation_checked_at")
+  private Instant reconciliationCheckedAt;
+
   @Column(name = "expires_at", nullable = false)
   private Instant expiresAt;
 
@@ -95,7 +101,11 @@ public class PaymentAttempt {
         confirmationId, payerUserId, point3SessionId, payerId, amount, expiresAt);
   }
 
-  public void startCapture() {
+  public void startCapture(String payerId, Instant startedAt) {
+    Objects.requireNonNull(payerId, "payerId");
+    Objects.requireNonNull(startedAt, "startedAt");
+    this.payerId = payerId;
+    this.captureStartedAt = startedAt;
     this.status = PaymentAttemptStatus.IN_PROGRESS;
     this.failureCode = null;
   }
@@ -105,6 +115,11 @@ public class PaymentAttempt {
     this.failureCode = failureCode;
     this.status = PaymentAttemptStatus.NEEDS_CONFIRMATION;
     this.completedAt = completedAt;
+    this.reconciliationCheckedAt = completedAt;
+  }
+
+  public void markReconciliationChecked(Instant checkedAt) {
+    this.reconciliationCheckedAt = Objects.requireNonNull(checkedAt, "checkedAt");
   }
 
   public void succeed(String payerId, Instant completedAt) {
@@ -128,10 +143,11 @@ public class PaymentAttempt {
 
   public boolean isActive(Instant now) {
     Objects.requireNonNull(now, "now");
-    boolean activeStatus = this.status == PaymentAttemptStatus.READY
-        || this.status == PaymentAttemptStatus.IN_PROGRESS;
-
-    return activeStatus && !now.isAfter(this.expiresAt);
+    if (this.status == PaymentAttemptStatus.IN_PROGRESS
+        || this.status == PaymentAttemptStatus.NEEDS_CONFIRMATION) {
+      return true;
+    }
+    return this.status == PaymentAttemptStatus.READY && !now.isAfter(this.expiresAt);
   }
 
   public boolean needsConfirmation() {
